@@ -70,7 +70,7 @@ def apply_op(op):
         db.add_project(op.get("category", "Other"), op["name"].strip(),
                        description=op.get("description", ""), status=op.get("status", "Planning"),
                        priority=op.get("priority", "Medium"), due_date=op.get("due_date") or None,
-                       parent_id=op.get("parent_id") or None)
+                       parent_id=op.get("parent_id") or None, tags=op.get("tags") or [])
     elif kind == "updateProject":
         if not op.get("id"):
             return False
@@ -96,6 +96,14 @@ def apply_op(op):
         if not (op.get("name") or "").strip():
             return False
         db.add_category(op["name"].strip())
+    elif kind == "renameCategory":
+        if not (op.get("old") and (op.get("new") or "").strip()):
+            return False
+        db.rename_category(op["old"], op["new"].strip())
+    elif kind == "deleteCategory":
+        if not op.get("name"):
+            return False
+        db.delete_category(op["name"])
     else:
         return False
     return True

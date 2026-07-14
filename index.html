@@ -59,6 +59,16 @@
   .group-head{display:flex;align-items:center;gap:8px;padding:18px 20px 4px;}
   .gh-label{font-family:'Oswald';font-size:15px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-dim);}
   .gh-count{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-faint);background:var(--surface-2);padding:1px 7px;border-radius:8px;}
+  .gh-actions{margin-left:auto;display:flex;gap:5px;}
+  .icon-btn.sm{min-height:30px;min-width:30px;font-size:12px;padding:0 6px;}
+  .tb-left,.tb-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .tb-lbl{font-family:'JetBrains Mono';font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-faint);}
+  .catchip{background:rgba(92,200,255,0.12);color:var(--accent);}
+  .tagchip{background:rgba(147,184,58,0.14);color:#b7d15a;display:inline-flex;align-items:center;gap:4px;}
+  .tag-x{cursor:pointer;color:inherit;opacity:.7;font-weight:700;}
+  .tag-x:hover{opacity:1;color:var(--ember);}
+  .tag-add-input{background:var(--surface-2);border:1px dashed var(--line);color:var(--ink);border-radius:3px;font-family:'JetBrains Mono';font-size:10px;padding:2px 6px;width:64px;}
+  .tag-add-input:focus{outline:none;border-color:var(--accent);}
 
   .cards{padding:6px 20px;display:flex;flex-direction:column;gap:12px;}
   .list{padding:6px 20px;display:flex;flex-direction:column;gap:6px;}
@@ -227,7 +237,7 @@ const TASK_CYCLE = ["todo","doing","done"];
 
 // ---------------- state ----------------
 let data = { categories:[], projects:[], tasks:[], rev:0 };
-let ui = { view:'gallery', filterCat:'all', open:{} };
+let ui = { view:'gallery', filterCat:'all', groupBy:'category', open:{} };
 const MY_ID = 'u'+Math.random().toString(36).slice(2,9);
 const UI_KEY = 'ppt-ui-v3';
 const CACHE_KEY = 'ppt-cache-v3';
@@ -312,11 +322,20 @@ function renderProgress(){
 }
 function renderToolbar(){
   document.getElementById('toolbar').innerHTML = `
-    <div class="seg">
-      <button class="seg-btn${ui.view==='list'?' on':''}" data-view="list">List</button>
-      <button class="seg-btn${ui.view==='gallery'?' on':''}" data-view="gallery">Gallery</button>
+    <div class="tb-left">
+      <span class="tb-lbl">Group</span>
+      <div class="seg">
+        <button class="seg-btn${ui.groupBy!=='tag'?' on':''}" data-group="category">Category</button>
+        <button class="seg-btn${ui.groupBy==='tag'?' on':''}" data-group="tag">Tag</button>
+      </div>
     </div>
-    <button class="btn-add" id="addProjectBtn">+ Add project</button>`;
+    <div class="tb-right">
+      <div class="seg">
+        <button class="seg-btn${ui.view==='list'?' on':''}" data-view="list">List</button>
+        <button class="seg-btn${ui.view==='gallery'?' on':''}" data-view="gallery">Gallery</button>
+      </div>
+      <button class="btn-add" id="addProjectBtn">+ Add project</button>
+    </div>`;
 }
 
 // ---------------- rendering: board ----------------
@@ -325,6 +344,8 @@ function statusBadge(p, clickable){
   return `<span class="status-badge ${m.cls}${clickable?' click':''}" ${clickable?`data-act="cycle-status" data-id="${p.id}"`:''}><span class="led"></span>${esc(p.status)}</span>`;
 }
 function priTag(p){ return `<span class="tag ${PRI_CLS[p.priority]||'pri-med'}">${esc(p.priority||'Medium')}</span>`; }
+function catChip(p){ return ui.groupBy==='tag' ? `<span class="tag catchip">${esc(p.category)}</span>` : ''; }
+function tagChips(p){ return (p.tags||[]).map(t=>`<span class="tag tagchip">#${esc(t)}</span>`).join(''); }
 function progBar(p){ const c=taskCounts(p); return `<div class="card-prog"><div class="track"><div class="fill" style="width:${projPct(p)}%"></div></div><div class="pct">${c.done}/${c.total}</div></div>`; }
 
 function cardHTML(p){
@@ -333,7 +354,7 @@ function cardHTML(p){
   return `<div class="card" data-act="open" data-id="${p.id}">
     <div class="card-top">
       <div><div class="p-name">${esc(p.name)}</div>
-        <div class="chips">${priTag(p)}${dueBadge(p.due_date,p.status==='Complete')}</div></div>
+        <div class="chips">${catChip(p)}${priTag(p)}${tagChips(p)}${dueBadge(p.due_date,p.status==='Complete')}</div></div>
       ${statusBadge(p,false)}
     </div>
     ${progBar(p)}
@@ -356,8 +377,8 @@ function rowHTML(p, depth){
 function taskHTML(t){
   const st=t.state||'todo';
   return `<div class="task task-${st}">
-    <span class="task-toggle" data-act="cycle-task" data-id="${t.id}"><span class="tk-dot"></span></span>
-    <span class="task-label" data-act="cycle-task" data-id="${t.id}">${esc(t.name)}</span>
+    <span class="task-toggle" data-act="cycle-task" data-id="${t.id}" title="To Do → Working → Completed"><span class="tk-dot"></span></span>
+    <span class="task-label" data-act="rename-task" data-id="${t.id}" title="Click to rename">${esc(t.name)}</span>
     <input class="task-due-input" type="date" value="${t.due_date||''}" data-chg="task-due" data-id="${t.id}" title="Due date">
     ${dueBadge(t.due_date, st==='done')}
     <button class="task-del" data-act="del-task" data-id="${t.id}" title="Delete task">×</button>
@@ -375,7 +396,12 @@ function detailHTML(p, depth){
     <div class="detail-head">
       <div class="dh-left">
         <div class="d-name" data-act="collapse" data-id="${p.id}">${esc(p.name)} <span class="chev">▲</span></div>
-        <div class="chips">${priTag(p)}${dueBadge(p.due_date,p.status==='Complete')}</div>
+        <div class="chips">
+          <span class="tag catchip">${esc(p.category)}</span>${priTag(p)}
+          ${(p.tags||[]).map(t=>`<span class="tag tagchip">#${esc(t)}<span class="tag-x" data-act="untag" data-id="${p.id}" data-tag="${esc(t)}">×</span></span>`).join('')}
+          <input class="tag-add-input" placeholder="+tag" data-key="add-tag" data-id="${p.id}">
+          ${dueBadge(p.due_date,p.status==='Complete')}
+        </div>
       </div>
       <div class="dh-right">
         ${statusBadge(p,true)}
@@ -403,19 +429,38 @@ function projectNode(p, depth){
   return ui.view==='list' ? rowHTML(p, depth) : cardHTML(p);
 }
 
+function topFiltered(){ return data.projects.filter(p=>!p.parent_id && (ui.filterCat==='all'||p.category===ui.filterCat)); }
+
 function renderBoard(){
   const root=document.getElementById('boardContent');
-  const cats = ui.filterCat==='all' ? catNames() : [ui.filterCat];
+  const wrap = ()=> ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
   let html='', any=false;
-  cats.forEach(cat=>{
-    const tops=topProjects(cat);
-    if(!tops.length) return;
-    any=true;
-    html += `<section class="group"><div class="group-head"><span class="gh-label">${esc(cat)}</span><span class="gh-count">${tops.length}</span></div>`;
-    html += ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
-    tops.forEach(p=>{ html += projectNode(p, 0); });
-    html += `</div></section>`;
-  });
+
+  if(ui.groupBy==='tag'){
+    const tops=topFiltered();
+    const tagset=new Set();
+    tops.forEach(p=> ((p.tags&&p.tags.length)?p.tags:['(untagged)']).forEach(t=>tagset.add(t)));
+    const sorted=[...tagset].sort((a,b)=> a==='(untagged)'?1:(b==='(untagged)'?-1:a.localeCompare(b)));
+    sorted.forEach(tag=>{
+      const items=tops.filter(p=> tag==='(untagged)' ? !(p.tags&&p.tags.length) : (p.tags||[]).includes(tag));
+      if(!items.length) return; any=true;
+      html += `<section class="group"><div class="group-head"><span class="gh-label">${tag==='(untagged)'?'(untagged)':'#'+esc(tag)}</span><span class="gh-count">${items.length}</span></div>${wrap()}`;
+      items.forEach(p=>{ html += projectNode(p,0); });
+      html += `</div></section>`;
+    });
+  } else {
+    const cats = ui.filterCat==='all' ? catNames() : [ui.filterCat];
+    cats.forEach(cat=>{
+      const tops=topProjects(cat);
+      if(!tops.length) return;
+      any=true;
+      html += `<section class="group"><div class="group-head"><span class="gh-label">${esc(cat)}</span><span class="gh-count">${tops.length}</span>`
+        + `<span class="gh-actions"><button class="icon-btn sm" data-act="rename-cat" data-cat="${esc(cat)}" title="Rename category">✎</button>`
+        + `<button class="icon-btn sm danger" data-act="del-cat" data-cat="${esc(cat)}" title="Delete category">🗑</button></span></div>${wrap()}`;
+      tops.forEach(p=>{ html += projectNode(p, 0); });
+      html += `</div></section>`;
+    });
+  }
   if(!any){
     html = `<div class="empty-panel"><div class="big">No projects</div><p>Nothing here yet. Add one with <b>+ Add project</b>, or send your Telegram bot something like <b>#TAK-CAP !High Radio tool | notes</b>.</p></div>`;
   }
@@ -441,6 +486,7 @@ function openModal(id, parentId){
       <label>Priority<select id="m_pri">${PRIORITIES.map(s=>`<option${cur.priority===s?' selected':''}>${s}</option>`).join('')}</select></label>
       <label>Due date<input id="m_due" type="date" value="${cur.due_date||''}"></label>
     </div>
+    <label>Tags (comma-separated)<input id="m_tags" value="${esc((cur.tags||[]).join(', '))}"></label>
     <label>Parent (sub-project of)<select id="m_parent"><option value="">— none (top-level) —</option>${parents.map(x=>`<option value="${x.id}"${cur.parent_id===x.id?' selected':''}>${esc(x.name)} [${esc(x.category)}]</option>`).join('')}</select></label>
     <div class="modal-actions">
       ${p?`<button class="btn-danger" data-mdelete>Delete</button>`:'<span></span>'}
@@ -461,6 +507,7 @@ function saveModal(){
     priority: document.getElementById('m_pri').value,
     due_date: document.getElementById('m_due').value || null,
     parent_id: document.getElementById('m_parent').value || null,
+    tags: document.getElementById('m_tags').value.split(',').map(s=>s.trim()).filter(Boolean),
   };
   if(id){ sendOp({op:'updateProject', id, patch:fields}); }
   else { sendOp({op:'addProject', ...fields}); if(fields.parent_id) ui.open[fields.parent_id]=true, saveUI(); }
@@ -477,21 +524,44 @@ function onBoardClick(e){
   else if(a==='cycle-status'){ const p=projById(id); if(p){ const n=STATUS_CYCLE[(STATUS_CYCLE.indexOf(p.status)+1)%STATUS_CYCLE.length]; localProj(id,{status:n}); sendOp({op:'updateProject',id,patch:{status:n}}); } }
   else if(a==='cycle-task'){ const t=data.tasks.find(x=>x.id===id); if(t){ const n=TASK_CYCLE[(TASK_CYCLE.indexOf(t.state||'todo')+1)%TASK_CYCLE.length]; localTask(id,{state:n}); sendOp({op:'updateTask',id,patch:{state:n}}); } }
   else if(a==='del-task'){ sendOp({op:'deleteTask',id}); }
+  else if(a==='rename-task'){ startRenameTask(el, id); }
   else if(a==='edit'){ openModal(id); }
   else if(a==='del-project'){ const p=projById(id); if(confirm('Delete "'+(p?p.name:'')+'" and its sub-projects & tasks?')) sendOp({op:'deleteProject',id}); }
   else if(a==='add-sub'){ openModal(null, id); }
+  else if(a==='untag'){ const p=projById(id); if(p){ const tags=(p.tags||[]).filter(t=>t!==el.dataset.tag); localProj(id,{tags}); sendOp({op:'updateProject',id,patch:{tags}}); } }
+  else if(a==='rename-cat'){ const cat=el.dataset.cat; const n=prompt('Rename category "'+cat+'" to:', cat); if(n&&n.trim()&&n.trim()!==cat) sendOp({op:'renameCategory', old:cat, new:n.trim()}); }
+  else if(a==='del-cat'){ const cat=el.dataset.cat; if(confirm('Delete category "'+cat+'"? Its projects move to Other.')){ if(ui.filterCat===cat) ui.filterCat='all'; sendOp({op:'deleteCategory', name:cat}); } }
+}
+
+function startRenameTask(labelEl, id){
+  const t=data.tasks.find(x=>x.id===id); if(!t) return;
+  const input=document.createElement('input');
+  input.className='add-input'; input.value=t.name; input.style.margin='0'; input.style.flex='1';
+  let commit=false;
+  const finish=(save)=>{ if(commit) return; commit=true;
+    const v=input.value.trim();
+    if(save && v && v!==t.name){ localTask(id,{name:v}); sendOp({op:'updateTask',id,patch:{name:v}}); } else { render(); } };
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); finish(true); } else if(e.key==='Escape'){ finish(false); } });
+  input.addEventListener('blur', ()=> finish(true));
+  labelEl.replaceWith(input); input.focus(); input.select();
 }
 function onBoardKey(e){
   if(e.key!=='Enter') return;
-  const el=e.target.closest('[data-key="add-task"]'); if(!el) return;
+  const el=e.target.closest('[data-key]'); if(!el) return;
   const v=el.value.trim(); if(!v) return;
-  sendOp({op:'addTask', project_id:el.dataset.id, name:v}); el.value='';
+  if(el.dataset.key==='add-task'){ sendOp({op:'addTask', project_id:el.dataset.id, name:v}); el.value=''; }
+  else if(el.dataset.key==='add-tag'){
+    const p=projById(el.dataset.id); const tags = p&&p.tags ? [...p.tags] : [];
+    if(!tags.includes(v)){ tags.push(v); localProj(el.dataset.id,{tags}); sendOp({op:'updateProject', id:el.dataset.id, patch:{tags}}); }
+    el.value='';
+  }
 }
 function onBoardChange(e){
   const el=e.target.closest('[data-chg="task-due"]'); if(!el) return;
   sendOp({op:'updateTask', id:el.dataset.id, patch:{due_date:el.value||null}});
 }
 function onToolbar(e){
+  const g=e.target.closest('[data-group]'); if(g){ ui.groupBy=g.dataset.group; saveUI(); render(); return; }
   const v=e.target.closest('[data-view]'); if(v){ ui.view=v.dataset.view; saveUI(); render(); return; }
   if(e.target.closest('#addProjectBtn')) openModal(null);
 }

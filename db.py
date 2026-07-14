@@ -11,6 +11,7 @@ bumps a monotonic `rev` so the web layer can broadcast "something changed".
 Standard library only.
 """
 
+import json
 import os
 import sqlite3
 import threading
@@ -81,6 +82,10 @@ def init():
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     with _lock, _conn() as c:
         c.executescript(SCHEMA)
+        # migration: cross-cutting tags on projects (added after initial schema)
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(projects)")]
+        if "tags" not in cols:
+            c.execute("ALTER TABLE projects ADD COLUMN tags TEXT DEFAULT '[]'")
         if c.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
             c.executemany("INSERT INTO categories(name,sort) VALUES(?,?)",
                           [(n, i) for i, n in enumerate(DEFAULT_CATEGORIES)])
@@ -144,6 +149,11 @@ def get_state():
         projects = [dict(r) for r in c.execute("SELECT * FROM projects ORDER BY sort, created_at")]
         tasks = [dict(r) for r in c.execute("SELECT * FROM tasks ORDER BY sort, created_at")]
         rev = int(c.execute("SELECT v FROM meta WHERE k='rev'").fetchone()["v"])
+    for p in projects:  # tags stored as JSON text -> return as a list
+        try:
+            p["tags"] = json.loads(p.get("tags") or "[]")
+        except Exception:
+            p["tags"] = []
     return {"categories": cats, "projects": projects, "tasks": tasks, "rev": rev}
 
 
@@ -177,26 +187,56 @@ def add_category(name):
         _bump(c)
 
 
+def rename_category(old, new):
+    new = (new or "").strip()
+    if not new or new == old:
+        return
+    with _lock, _conn() as c:
+        exists = c.execute("SELECT 1 FROM categories WHERE name=?", (new,)).fetchone()
+        if exists:
+            c.execute("DELETE FROM categories WHERE name=?", (old,))   # merge into existing
+        else:
+            c.execute("UPDATE categories SET name=? WHERE name=?", (new, old))
+        c.execute("UPDATE projects SET category=? WHERE category=?", (new, old))
+        _bump(c)
+
+
+def delete_category(name):
+    """Delete a category; its projects are reassigned (default -> 'Other'). Won't remove the last one."""
+    with _lock, _conn() as c:
+        cats = [r["name"] for r in c.execute("SELECT name FROM categories ORDER BY sort, name")]
+        if name not in cats or len(cats) <= 1:
+            return None
+        target = "Other" if ("Other" in cats and name != "Other") else next(x for x in cats if x != name)
+        c.execute("UPDATE projects SET category=? WHERE category=?", (target, name))
+        c.execute("DELETE FROM categories WHERE name=?", (name,))
+        _bump(c)
+    return target
+
+
 def add_project(category, name, description="", status="Planning", priority="Medium",
-                due_date=None, parent_id=None):
+                due_date=None, parent_id=None, tags=None):
     category = category if category in _category_names() else "Other"
     pid = next_project_id(category)
     now = _now()
+    tags_json = json.dumps(tags or [])
     with _lock, _conn() as c:
         mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM projects WHERE category=?", (category,)).fetchone()[0]
         c.execute(
-            "INSERT INTO projects(id,category,parent_id,name,description,status,priority,due_date,sort,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (pid, category, parent_id, name, description, status, priority, due_date, mx + 1, now, now))
+            "INSERT INTO projects(id,category,parent_id,name,description,status,priority,due_date,tags,sort,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, category, parent_id, name, description, status, priority, due_date, tags_json, mx + 1, now, now))
         _bump(c)
     return pid
 
 
 def update_project(pid, patch):
     fields = {k: v for k, v in patch.items()
-              if k in ("category", "parent_id", "name", "description", "status", "priority", "due_date", "sort")}
+              if k in ("category", "parent_id", "name", "description", "status", "priority", "due_date", "sort", "tags")}
     if not fields:
         return
+    if "tags" in fields and isinstance(fields["tags"], list):
+        fields["tags"] = json.dumps(fields["tags"])
     fields["updated_at"] = _now()
     sets = ", ".join(f"{k}=?" for k in fields)
     with _lock, _conn() as c:
