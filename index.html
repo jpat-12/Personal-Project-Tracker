@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Project Statusboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0f1114;
+    --surface: #1c1f25;
+    --surface-2: #282c33;
+    --line: #454a53;
+    --ink: #f7f6f2;
+    --ink-dim: #c3c9d1;
+    --ink-faint: #9198a3;
+    --accent: #5cc8ff;      /* active / primary */
+    --accent-dim: #3a86ad;
+    --lime: #d4ff5c;        /* shipped */
+    --ember: #ff8258;       /* blocked */
+    --muted: #6b7280;       /* backlog */
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+    touch-action:manipulation;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:0 0 96px;}
+
+  /* ---------- Sidebar / header ---------- */
+  .sidebar{
+    padding:20px 16px 14px;
+    border-bottom:1px solid var(--line);
+    background:var(--bg);
+  }
+  .sidebar .progress-block,
+  .sidebar .stat-strip{ padding-left:0; padding-right:0; }
+  .brand-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+  h1{
+    font-family:'Oswald',sans-serif;
+    font-weight:700;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    font-size:26px;
+    margin:0;
+  }
+  h1 span{color:var(--accent);}
+  .sub{
+    font-size:12.5px;
+    color:var(--ink-dim);
+    margin-top:4px;
+    letter-spacing:0.02em;
+  }
+  .reset-btn{
+    background:none;border:1px solid var(--line);color:var(--ink-faint);
+    font-family:'Inter';font-size:11px;letter-spacing:0.05em;text-transform:uppercase;
+    padding:10px 12px;border-radius:3px;cursor:pointer;transition:.15s;min-height:40px;
+    touch-action:manipulation;
+  }
+  .reset-btn:hover{border-color:var(--ember);color:var(--ember);}
+
+  /* ---------- Filter rail ---------- */
+  .rail-scroll{
+    overflow-x:auto;
+    margin-top:16px;
+    padding-bottom:6px;
+    scrollbar-width:thin;
+    scroll-snap-type:x proximity;
+    -webkit-overflow-scrolling:touch;
+  }
+  .rail{
+    display:flex;
+    gap:6px;
+    min-width:max-content;
+  }
+  .tab{
+    font-family:'JetBrains Mono',monospace;
+    flex:0 0 auto;
+    min-width:84px;
+    min-height:44px;
+    padding:8px 14px;
+    text-align:center;
+    border-radius:4px;
+    border:1px solid var(--line);
+    background:var(--surface);
+    cursor:pointer;
+    transition:.15s;
+    position:relative;
+    scroll-snap-align:start;
+  }
+  .tab .n{display:block;font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--ink-dim);text-transform:uppercase;}
+  .tab .c{display:block;font-size:16px;font-weight:700;color:var(--ink);margin-top:2px;}
+  .tab.active{border-color:var(--accent);background:var(--surface-2);}
+  .tab.active .c{color:var(--accent);}
+  .tab.active .n{color:var(--accent);}
+  .tab:hover:not(.active){border-color:#4a4f57;}
+
+  /* ---------- Progress ---------- */
+  .progress-block{padding:16px 20px 0;}
+  .progress-label{
+    display:flex;justify-content:space-between;
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;color:var(--ink-dim);margin-bottom:6px;
+  }
+  .progress-track{height:5px;background:var(--surface-2);border-radius:3px;overflow:hidden;}
+  .progress-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s;}
+
+  /* ---------- Stat strip ---------- */
+  .stat-strip{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
+    padding:16px 20px 0;
+  }
+  .stat{
+    background:var(--surface);border:1px solid var(--line);border-radius:5px;
+    padding:11px 10px;text-align:center;
+  }
+  .stat .v{font-family:'Oswald';font-size:22px;font-weight:600;line-height:1;}
+  .stat .k{font-family:'JetBrains Mono';font-size:8.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);margin-top:5px;}
+  .stat.active .v{color:var(--accent);}
+  .stat.blocked .v{color:var(--ember);}
+  .stat.shipped .v{color:var(--lime);}
+  .stat.backlog .v{color:var(--muted);}
+
+  /* ---------- Section banner ---------- */
+  .focus-banner{
+    margin:18px 20px 8px;
+    padding:14px 16px;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-left:3px solid var(--accent);
+    border-radius:4px;
+  }
+  .focus-banner .day-tag{
+    font-family:'JetBrains Mono';font-size:11px;color:var(--accent);letter-spacing:0.08em;text-transform:uppercase;
+  }
+  .focus-banner h2{
+    font-family:'Oswald';font-size:19px;margin:2px 0 0;font-weight:600;letter-spacing:0.01em;
+  }
+
+  /* ---------- Empty panel ---------- */
+  .empty-panel{
+    margin:40px 20px;
+    padding:50px 20px;
+    text-align:center;
+    border:1px dashed var(--line);
+    border-radius:6px;
+  }
+  .empty-panel .big{font-family:'Oswald';font-size:30px;letter-spacing:0.06em;color:var(--ink-faint);text-transform:uppercase;}
+  .empty-panel p{color:var(--ink-dim);font-size:13.5px;max-width:380px;margin:10px auto 0;line-height:1.5;}
+
+  /* ---------- Project cards ---------- */
+  .cards{padding:6px 20px;display:flex;flex-direction:column;gap:12px;}
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:14px 16px 16px;
+  }
+  .card.flagship{border-color:#3a5f70;background:linear-gradient(180deg, #13212a 0%, var(--surface) 44px);}
+  .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+  .ex-name{font-family:'Oswald';font-size:17px;font-weight:600;letter-spacing:0.01em;}
+  .tags{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;}
+  .tag{
+    font-family:'JetBrains Mono';font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;
+    padding:3px 7px;border-radius:3px;background:var(--surface-2);color:var(--ink-dim);
+  }
+  .tag.flag{background:rgba(92,200,255,0.15);color:var(--accent);}
+
+  /* status badge (click to cycle) */
+  .status-badge{
+    font-family:'JetBrains Mono';font-size:10.5px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;
+    padding:8px 12px;border-radius:4px;cursor:pointer;transition:.15s;min-height:40px;
+    display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--surface-2);
+    flex:0 0 auto;user-select:none;touch-action:manipulation;
+  }
+  .status-badge .led{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+  .status-badge[data-status="active"]{border-color:var(--accent-dim);color:var(--accent);}
+  .status-badge[data-status="active"] .led{background:var(--accent);box-shadow:0 0 6px var(--accent);}
+  .status-badge[data-status="blocked"]{border-color:#8a4a34;color:var(--ember);}
+  .status-badge[data-status="blocked"] .led{background:var(--ember);box-shadow:0 0 6px var(--ember);}
+  .status-badge[data-status="shipped"]{border-color:#6a8a2a;color:var(--lime);}
+  .status-badge[data-status="shipped"] .led{background:var(--lime);box-shadow:0 0 6px var(--lime);}
+  .status-badge[data-status="backlog"]{color:var(--ink-faint);}
+  .status-badge[data-status="backlog"] .led{background:var(--muted);}
+
+  /* per-card progress */
+  .card-prog{display:flex;align-items:center;gap:10px;margin-top:13px;}
+  .card-prog .track{flex:1 1 auto;height:4px;background:var(--surface-2);border-radius:3px;overflow:hidden;}
+  .card-prog .fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s;}
+  .card-prog .pct{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-dim);flex:0 0 auto;min-width:42px;text-align:right;}
+  .card.status-shipped .card-prog .fill{background:var(--lime);}
+  .card.status-blocked .card-prog .fill{background:var(--ember);}
+
+  /* milestone plates */
+  .sets-row{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+    gap:8px;
+    margin-top:14px;
+  }
+  .plate{
+    position:relative;
+    min-height:52px;
+    padding:9px 24px 9px 11px;
+    border-radius:5px;
+    border:1px solid var(--line);
+    background:var(--surface-2);
+    text-align:left;
+    cursor:pointer;
+    transition:.12s;
+    user-select:none;
+    touch-action:manipulation;
+    display:flex;align-items:center;
+  }
+  .plate:hover{border-color:#4a4f57;}
+  .plate .ms{font-family:'Inter';font-size:12px;font-weight:500;color:var(--ink-dim);line-height:1.3;}
+  .plate.done{
+    background:linear-gradient(180deg, rgba(212,255,92,0.16), rgba(212,255,92,0.05));
+    border-color:var(--lime);
+  }
+  .plate.done .ms{color:var(--ink);text-decoration:line-through;text-decoration-color:var(--lime-dim, #93b83a);}
+  .plate.done::after{
+    content:"\2713";position:absolute;top:50%;right:8px;transform:translateY(-50%);
+    font-size:12px;color:var(--lime);font-weight:700;
+  }
+  .plate::after{
+    content:"";position:absolute;top:50%;right:9px;transform:translateY(-50%);
+    width:11px;height:11px;border:1.5px solid var(--line);border-radius:3px;
+  }
+
+  .card-bottom{
+    display:flex;justify-content:space-between;align-items:center;
+    margin-top:13px;padding-top:11px;border-top:1px solid var(--line);
+    flex-wrap:wrap;gap:8px;
+  }
+  .note{font-size:11.5px;color:var(--ink-faint);font-style:italic;max-width:62%;}
+  .repo-chip{
+    font-family:'JetBrains Mono';font-size:10.5px;letter-spacing:0.02em;
+    background:var(--surface-2);border:1px solid var(--line);color:var(--ink-dim);
+    padding:7px 11px;border-radius:4px;text-decoration:none;transition:.15s;
+    display:inline-flex;align-items:center;gap:6px;min-height:36px;
+  }
+  a.repo-chip:hover{border-color:var(--accent);color:var(--accent);}
+
+  .legend{
+    margin:26px 20px 0;padding:12px 14px;
+    border:1px solid var(--line);border-radius:5px;
+    font-size:11.5px;color:var(--ink-faint);line-height:1.6;
+  }
+  .legend b{color:var(--ink-dim);}
+
+  footer{
+    text-align:center;padding:26px 20px 0;
+    font-family:'JetBrains Mono';font-size:10px;color:var(--ink-faint);letter-spacing:0.04em;
+  }
+
+  #loading{
+    position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;
+    font-family:'JetBrains Mono';color:var(--ink-faint);font-size:12px;letter-spacing:0.08em;text-transform:uppercase;z-index:100;
+  }
+
+  @media (max-width:560px){
+    .ex-name{font-size:15px;}
+    .note{max-width:100%;}
+    .card{padding:12px 13px 14px;}
+    .card-bottom{flex-direction:column;align-items:stretch;}
+    .repo-chip{justify-content:center;}
+    h1{font-size:22px;}
+    .focus-banner{margin:14px 14px 8px;}
+    .cards{padding:6px 14px;}
+    .progress-block,.stat-strip{padding-left:14px;padding-right:14px;}
+    .stat-strip{grid-template-columns:repeat(2,1fr);}
+    .sets-row{grid-template-columns:1fr;}
+  }
+
+  /* ================= DESKTOP LAYOUT ================= */
+  @media (min-width:900px){
+    .wrap{
+      display:grid;
+      grid-template-columns:300px minmax(0,1fr);
+      max-width:1500px;
+      align-items:start;
+      padding-bottom:0;
+    }
+
+    /* sticky full-height sidebar */
+    .sidebar{
+      position:sticky;top:0;
+      height:100vh;
+      overflow-y:auto;
+      border-bottom:none;
+      border-right:1px solid var(--line);
+      padding:26px 22px;
+      display:flex;flex-direction:column;gap:22px;
+    }
+    .brand-row{flex-direction:column;align-items:stretch;gap:12px;}
+    .reset-btn{align-self:flex-start;}
+
+    /* vertical nav rail */
+    .rail-scroll{overflow:visible;margin-top:0;padding-bottom:0;}
+    .rail{flex-direction:column;min-width:0;gap:7px;}
+    .tab{
+      width:100%;min-width:0;
+      display:flex;align-items:center;justify-content:space-between;
+      text-align:left;padding:12px 15px;
+    }
+    .tab .n{margin:0;font-size:11px;}
+    .tab .c{margin:0;font-size:17px;line-height:1;}
+
+    .sidebar .progress-block{padding:0;}
+    .sidebar .stat-strip{padding:0;grid-template-columns:repeat(2,1fr);}
+
+    /* main column */
+    .main{padding:6px 6px 60px;min-width:0;}
+    .focus-banner{margin:22px 20px 12px;}
+
+    /* masonry card grid — flows into 2–3 columns by width */
+    .cards{
+      display:block;
+      column-width:430px;
+      column-gap:16px;
+      padding:6px 20px;
+    }
+    .card{break-inside:avoid;margin-bottom:16px;-webkit-column-break-inside:avoid;}
+
+    /* two milestone columns inside wider cards */
+    .sets-row{grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));}
+
+    .legend{margin:26px 20px 0;}
+    footer{padding-bottom:24px;}
+  }
+
+  /* extra-wide: give the sidebar a touch more room */
+  @media (min-width:1300px){
+    .wrap{grid-template-columns:320px minmax(0,1fr);}
+    .cards{column-width:400px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">Loading board…</div>
+
+<div class="wrap" id="app" style="display:none;">
+  <aside class="sidebar">
+    <div class="brand-row">
+      <div>
+        <h1>PROJECT<span>·</span>STATUSBOARD</h1>
+        <div class="sub">PORTFOLIO TRACKER · TAP MILESTONES · CLICK STATUS TO CYCLE</div>
+      </div>
+      <button class="reset-btn" id="resetBtn">Reset progress</button>
+    </div>
+    <div class="rail-scroll">
+      <div class="rail" id="rail"></div>
+    </div>
+    <div class="progress-block">
+      <div class="progress-label"><span id="progLabel">PORTFOLIO PROGRESS</span><span id="progPct">0%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="progFill" style="width:0%"></div></div>
+    </div>
+    <div class="stat-strip" id="statStrip"></div>
+  </aside>
+
+  <main class="main">
+  <div id="boardContent"></div>
+
+  <div class="legend">
+    <b>How it works —</b> the rail up top filters projects by status. Each project auto-computes a progress bar from its milestones — <b>tap a milestone</b> to mark it done. <b>Click a project's status badge</b> to cycle it: Active → Blocked → Shipped → Backlog. Swipe left/right to move between status filters. Everything saves automatically to this browser via <b>localStorage</b>. To add or rename projects and milestones, edit the <b>SEED</b> array near the top of the <script> block in this file.
+  </div>
+
+  <footer>PORTFOLIO STATUSBOARD · DATA STAYS IN THIS BROWSER</footer>
+  </main>
+</div>
+
+<script>
+// ================= SEED DATA — edit this to change your board =================
+// status: 'active' | 'blocked' | 'shipped' | 'backlog'   (this is just the default; you can cycle it live)
+// flagship:true adds a highlighted card. repo is an optional path/URL shown as a chip.
+const SEED = [
+  { id:'fieldtak', name:'FieldTAK (CAP Field Plugin V2)', cat:'ATAK', status:'active', flagship:true,
+    repo:'CivilAirPatrol-Field-PluginV2',
+    note:'CAP ATAK plugin — ArcGIS feature service integration, ATAK 5.6.0 SDK.',
+    milestones:['Feature service sync','Sign-in / sortie flow','WMIRS auth','Icon / display config','5.7.0 build'] },
+
+  { id:'efjohnson', name:'EFJohnson 5112 Plugin', cat:'ATAK', status:'active',
+    repo:'ATAK-Plugin_EFJohnson',
+    note:'CoT over VHF P25 packet data via USB serial.',
+    milestones:['USB serial bridge','CoT encode/decode','main.jar bundling','Keystore staging','Field test'] },
+
+  { id:'tak_icu', name:'TAK ICU Video Streamer', cat:'ATAK', status:'active',
+    repo:'ATAK-Plugin_TAK_ICU',
+    note:'Plugin suite + video streamer; build_output.txt currently open.',
+    milestones:['Streamer core','Plugin suite wiring','Build passes','Package release'] },
+
+  { id:'webtak_video', name:'WebTAK Video Viewer', cat:'WebTAK', status:'active',
+    repo:'WebTAK-Plugin-VideoViewer',
+    note:'Floating resizable RTSP/SRT/RTMP/HLS windows via TAK Restreamer (MediaMTX).',
+    milestones:['Framework-free engine','WebTAK shim','Multi-window layout','Restreamer hookup'] },
+
+  { id:'nodered', name:'TAK Survey123 (Node-RED)', cat:'Integration', status:'active',
+    repo:'TAK-Survey123-NodeRED',
+    note:'Node-RED-only port of the Esri integration — no Python/systemd.',
+    milestones:['Port flows.json','Survey123 ingest','CoT output','Remove Python deps'] },
+
+  { id:'featurelink', name:'FeatureLink + Display Config', cat:'ATAK', status:'active',
+    repo:'ATAK-Plugin_FeatureLink',
+    note:'Feature linking plugin with shared icon/display config set.',
+    milestones:['Link engine','Display config icons','ATAK integration','Docs'] },
+
+  { id:'iema', name:'IEMA Data Plugin', cat:'ATAK', status:'active',
+    repo:'ATAK-Plugin_IEMA-Data',
+    note:'Illinois EMA data feed into ATAK.',
+    milestones:['Data source','Parser','ATAK overlay','Refresh scheduling'] },
+
+  { id:'cloudtak_sb', name:'CloudTAK StatusBoard (CAP)', cat:'CloudTAK', status:'active',
+    repo:'CloudTAK-Plugin_StatusBoard_CAP',
+    note:'Status board plugin for CloudTAK, CAP-flavored.',
+    milestones:['Board layout','Live status feed','CAP theming'] },
+
+  { id:'wmirs', name:'WMIRS TAK Interface', cat:'Integration', status:'blocked',
+    repo:'WMIRS-TAK Interface',
+    note:'Bridges WMIRS auth/data to TAK — waiting on auth flow (HAR captures on hand).',
+    milestones:['Auth capture','Token flow','Data mapping','TAK push'] },
+
+  { id:'sitreps', name:'Daily SitReps', cat:'Ops', status:'active',
+    repo:'DailySitReps',
+    note:'Automated daily situation reports.',
+    milestones:['Template','Data pull','Scheduling','Distribution'] },
+
+  { id:'quickcapture', name:'QuickCapture', cat:'ATAK', status:'shipped',
+    repo:'ATAK-Plugin-QuickCapture',
+    note:'Shipped — 1.5.0 for ATAK 5.7.0-civ release.',
+    milestones:['Capture flow','5.7.0 build','Release zip'] },
+
+  { id:'airtak', name:'AirTAK', cat:'ATAK', status:'backlog',
+    repo:'ATAK-Plugin_AirTAK',
+    note:'Airborne-focused ATAK plugin.',
+    milestones:['Scope','Prototype','Integration'] },
+
+  { id:'openatlas', name:'OpenAtlas', cat:'ATAK', status:'backlog',
+    repo:'ATAK-Plugin_OpenAtlas',
+    note:'Open basemap / atlas plugin.',
+    milestones:['Tile source','Overlay UI','Offline cache'] },
+
+  { id:'howto', name:'How-To Guide Plugin', cat:'ATAK', status:'backlog',
+    repo:'ATAK-Plugin_HowToGuide',
+    note:'In-app guidance / help plugin.',
+    milestones:['Content model','Viewer UI','Package'] },
+
+  { id:'infra', name:'infra-TAK', cat:'Infra', status:'active',
+    repo:'infra-TAK',
+    note:'TAK server / supporting infrastructure.',
+    milestones:['Server config','Restreamer','Backups','Monitoring'] },
+];
+// ============================================================================
+
+const STATUS_META = {
+  active:  { label:'Active',  order:0 },
+  blocked: { label:'Blocked', order:1 },
+  shipped: { label:'Shipped', order:2 },
+  backlog: { label:'Backlog', order:3 },
+};
+const STATUS_CYCLE = ['active','blocked','shipped','backlog'];
+
+const FILTERS = [
+  { key:'all',     label:'All' },
+  { key:'active',  label:'Active' },
+  { key:'blocked', label:'Blocked' },
+  { key:'shipped', label:'Shipped' },
+  { key:'backlog', label:'Backlog' },
+];
+
+// ---------------- State ----------------
+let state = { done:{}, statusOverride:{}, filter:'all' };
+const STORAGE_KEY = 'project-statusboard-v1';
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){ state = Object.assign({done:{}, statusOverride:{}, filter:'all'}, JSON.parse(raw)); }
+  }catch(e){ console.log('No saved board yet, starting fresh.'); }
+}
+function saveState(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  catch(e){ console.error('Could not save board:', e); }
+}
+
+// ---------------- Helpers ----------------
+function statusOf(p){ return state.statusOverride[p.id] || p.status; }
+function doneCount(p){
+  return p.milestones.reduce((n,_,i)=> n + (state.done[`${p.id}_m${i}`] ? 1 : 0), 0);
+}
+function projPct(p){
+  if(!p.milestones.length) return statusOf(p)==='shipped' ? 100 : 0;
+  return Math.round(doneCount(p)/p.milestones.length*100);
+}
+function statusCounts(){
+  const c = {active:0, blocked:0, shipped:0, backlog:0};
+  SEED.forEach(p=> c[statusOf(p)]++);
+  return c;
+}
+function visibleProjects(){
+  const list = state.filter==='all' ? SEED.slice() : SEED.filter(p=> statusOf(p)===state.filter);
+  return list.sort((a,b)=>{
+    const so = STATUS_META[statusOf(a)].order - STATUS_META[statusOf(b)].order;
+    if(so!==0) return so;
+    return projPct(b) - projPct(a);
+  });
+}
+
+// ---------------- Rendering ----------------
+function renderRail(){
+  const rail = document.getElementById('rail');
+  rail.innerHTML = '';
+  const counts = statusCounts();
+  FILTERS.forEach(f=>{
+    const n = f.key==='all' ? SEED.length : counts[f.key];
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (f.key===state.filter ? ' active' : '');
+    tab.innerHTML = `<span class="n">${f.label}</span><span class="c">${n}</span>`;
+    tab.onclick = ()=>{ state.filter = f.key; saveState(); renderAll(); };
+    rail.appendChild(tab);
+  });
+  const active = rail.querySelector('.tab.active');
+  if(active) active.scrollIntoView({behavior:'smooth', inline:'center', block:'nearest'});
+}
+
+function renderStats(){
+  const c = statusCounts();
+  const strip = document.getElementById('statStrip');
+  const cells = [
+    {cls:'active', k:'Active', v:c.active},
+    {cls:'blocked', k:'Blocked', v:c.blocked},
+    {cls:'shipped', k:'Shipped', v:c.shipped},
+    {cls:'backlog', k:'Backlog', v:c.backlog},
+  ];
+  strip.innerHTML = cells.map(x=>`<div class="stat ${x.cls}"><div class="v">${x.v}</div><div class="k">${x.k}</div></div>`).join('');
+}
+
+function renderProgress(){
+  // Portfolio progress = milestones done across all projects
+  let total=0, done=0;
+  SEED.forEach(p=>{ total += p.milestones.length; done += doneCount(p); });
+  const pct = total ? Math.round(done/total*100) : 0;
+  document.getElementById('progLabel').textContent = `PORTFOLIO PROGRESS — ${done}/${total} MILESTONES`;
+  document.getElementById('progPct').textContent = pct + '%';
+  document.getElementById('progFill').style.width = pct + '%';
+}
+
+function renderBoard(){
+  const content = document.getElementById('boardContent');
+  content.innerHTML = '';
+
+  const f = FILTERS.find(x=>x.key===state.filter);
+  const banner = document.createElement('div');
+  banner.className = 'focus-banner';
+  const list = visibleProjects();
+  banner.innerHTML = `<div class="day-tag">${f.label}</div><h2>${list.length} project${list.length===1?'':'s'}${state.filter==='all'?' · all statuses':''}</h2>`;
+  content.appendChild(banner);
+
+  if(!list.length){
+    const empty = document.createElement('div');
+    empty.className = 'empty-panel';
+    empty.innerHTML = `<div class="big">Nothing here</div><p>No projects with status “${f.label}”. Pick another filter, or cycle a project's status badge into this bucket.</p>`;
+    content.appendChild(empty);
+    return;
+  }
+
+  const cards = document.createElement('div');
+  cards.className = 'cards';
+
+  list.forEach(p=>{
+    const st = statusOf(p);
+    const pct = projPct(p);
+    const card = document.createElement('div');
+    card.className = 'card status-'+st + (p.flagship ? ' flagship' : '');
+
+    const topHTML = `
+      <div class="card-top">
+        <div>
+          <div class="ex-name">${p.name}</div>
+          <div class="tags">
+            <span class="tag">${p.cat}</span>
+            ${p.flagship ? '<span class="tag flag">Flagship</span>' : ''}
+          </div>
+        </div>
+        <div class="status-badge" data-status="${st}" data-id="${p.id}">
+          <span class="led"></span>${STATUS_META[st].label}
+        </div>
+      </div>`;
+
+    const progHTML = `
+      <div class="card-prog">
+        <div class="track"><div class="fill" style="width:${pct}%"></div></div>
+        <div class="pct">${doneCount(p)}/${p.milestones.length}</div>
+      </div>`;
+
+    let msHTML = '<div class="sets-row">';
+    p.milestones.forEach((m, i)=>{
+      const key = `${p.id}_m${i}`;
+      const doneClass = state.done[key] ? ' done' : '';
+      msHTML += `<div class="plate${doneClass}" data-key="${key}"><span class="ms">${m}</span></div>`;
+    });
+    msHTML += '</div>';
+
+    const bottomHTML = `
+      <div class="card-bottom">
+        <div class="note">${p.note ? p.note : ''}</div>
+        ${p.repo ? `<span class="repo-chip">▸ ${p.repo}</span>` : ''}
+      </div>`;
+
+    card.innerHTML = topHTML + progHTML + msHTML + bottomHTML;
+    cards.appendChild(card);
+  });
+
+  content.appendChild(cards);
+
+  // milestone toggle
+  content.querySelectorAll('.plate').forEach(pl=>{
+    pl.addEventListener('click', ()=>{
+      const key = pl.getAttribute('data-key');
+      state.done[key] = !state.done[key];
+      saveState();
+      renderAll();
+    });
+  });
+
+  // status cycle
+  content.querySelectorAll('.status-badge').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const id = b.getAttribute('data-id');
+      const cur = state.statusOverride[id] || SEED.find(p=>p.id===id).status;
+      const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(cur)+1) % STATUS_CYCLE.length];
+      state.statusOverride[id] = next;
+      saveState();
+      renderAll();
+    });
+  });
+}
+
+function renderAll(){
+  renderRail();
+  renderStats();
+  renderProgress();
+  renderBoard();
+}
+
+function init(){
+  loadState();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('app').style.display = '';  // let CSS decide (grid on desktop, block on mobile)
+  renderAll();
+
+  document.getElementById('resetBtn').addEventListener('click', ()=>{
+    if(confirm('Clear all milestone progress and status changes? This cannot be undone.')){
+      state = { done:{}, statusOverride:{}, filter: state.filter };
+      saveState();
+      renderAll();
+    }
+  });
+
+  // Swipe left/right to move between status filters
+  const surface = document.getElementById('boardContent');
+  let sx=null, sy=null;
+  surface.addEventListener('touchstart', e=>{ sx=e.touches[0].clientX; sy=e.touches[0].clientY; }, {passive:true});
+  surface.addEventListener('touchend', e=>{
+    if(sx===null) return;
+    const dx=e.changedTouches[0].clientX-sx, dy=e.changedTouches[0].clientY-sy;
+    sx=null;
+    if(Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)*1.5){
+      const idx = FILTERS.findIndex(f=>f.key===state.filter);
+      if(dx<0 && idx<FILTERS.length-1){ state.filter=FILTERS[idx+1].key; }
+      else if(dx>0 && idx>0){ state.filter=FILTERS[idx-1].key; }
+      else return;
+      saveState();
+      renderAll();
+    }
+  }, {passive:true});
+}
+
+init();
+</script>
+</body>
+</html>
