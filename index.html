@@ -491,6 +491,62 @@ function saveState(){
   catch(e){ console.error('Could not save board:', e); }
 }
 
+// ---------------- Cross-device sync (optional; degrades to localStorage) ----------------
+// When served by server.py this talks to a shared backend and receives live
+// updates from other devices via Server-Sent Events. Opened without that
+// backend (file:// or a plain static host), everything silently falls back to
+// localStorage-only and still works.
+let SYNC = false;
+let evtSource = null;
+
+function applyShared(d){
+  // 'filter' is a per-device UI preference and is intentionally NOT synced.
+  state.done = d.done || {};
+  state.statusOverride = d.statusOverride || {};
+  saveState();
+  renderAll();
+}
+
+async function sendOp(op){
+  if(!SYNC) return;
+  try{
+    await fetch('api/op', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(op)
+    });
+  }catch(e){ /* offline — localStorage keeps the change until reconnect */ }
+}
+
+async function connectSync(){
+  try{
+    const res = await fetch('api/state', {cache:'no-store'});
+    if(!res.ok) throw new Error('no backend');
+    const d = await res.json();
+    SYNC = true;
+    const localHas = Object.keys(state.done).length || Object.keys(state.statusOverride).length;
+    const serverEmpty = (d.rev||0) === 0
+      && !Object.keys(d.done||{}).length
+      && !Object.keys(d.statusOverride||{}).length;
+    if(serverEmpty && localHas){
+      // First run against a fresh backend: seed the shared board from this
+      // device's local progress instead of wiping it.
+      for(const k in state.done){ if(state.done[k]) sendOp({op:'setDone', key:k, value:true}); }
+      for(const id in state.statusOverride){ sendOp({op:'setStatus', id, status: state.statusOverride[id]}); }
+    }else{
+      applyShared(d);       // adopt the shared board on load
+    }
+  }catch(e){
+    SYNC = false;
+    return;                 // standalone / localStorage-only mode
+  }
+  try{
+    evtSource = new EventSource('api/events');
+    evtSource.onmessage = (e)=>{ try{ applyShared(JSON.parse(e.data)); }catch(_){} };
+    evtSource.onerror = ()=>{ /* EventSource reconnects on its own */ };
+  }catch(e){ /* SSE unsupported — changes still sync on next page load */ }
+}
+
 // ---------------- Helpers ----------------
 function statusOf(p){ return state.statusOverride[p.id] || p.status; }
 function doneCount(p){
@@ -625,9 +681,11 @@ function renderBoard(){
   content.querySelectorAll('.plate').forEach(pl=>{
     pl.addEventListener('click', ()=>{
       const key = pl.getAttribute('data-key');
-      state.done[key] = !state.done[key];
+      const val = !state.done[key];
+      if(val) state.done[key] = true; else delete state.done[key];
       saveState();
       renderAll();
+      sendOp({op:'setDone', key, value: val});
     });
   });
 
@@ -640,6 +698,7 @@ function renderBoard(){
       state.statusOverride[id] = next;
       saveState();
       renderAll();
+      sendOp({op:'setStatus', id, status: next});
     });
   });
 }
@@ -651,8 +710,8 @@ function renderAll(){
   renderBoard();
 }
 
-function init(){
-  loadState();
+async function init(){
+  loadState();            // instant paint from local cache (works offline)
   document.getElementById('loading').style.display = 'none';
   document.getElementById('app').style.display = '';  // let CSS decide (grid on desktop, block on mobile)
   renderAll();
@@ -662,6 +721,7 @@ function init(){
       state = { done:{}, statusOverride:{}, filter: state.filter };
       saveState();
       renderAll();
+      sendOp({op:'reset'});
     }
   });
 
@@ -682,6 +742,8 @@ function init(){
       renderAll();
     }
   }, {passive:true});
+
+  connectSync();   // adopt shared state + open live updates (no-op without the backend)
 }
 
 init();
