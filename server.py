@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
-server.py — static file server + tiny cross-device sync backend for the
-Project Statusboard. Standard library only (no pip installs).
+server.py — web board + Telegram poller for the Personal Project Tracker.
 
-Serves index.html and exposes:
-    GET  /api/state    -> current shared board  {done, statusOverride, rev}
-    POST /api/op       -> apply one change       {op: setDone|setStatus|reset, ...}
-    GET  /api/events   -> Server-Sent Events stream; pushes the full board to
-                          every connected device whenever anything changes.
+One process, standard library only:
+  - serves index.html and a JSON API backed by SQLite (db.py, the source of truth)
+  - GET  /api/state   -> {categories, projects, tasks, rev}
+  - POST /api/op      -> mutate (addProject/updateProject/deleteProject/
+                          addTask/updateTask/deleteTask/addCategory) {..., originId}
+  - GET  /api/events  -> Server-Sent Events; pushes full state on every change
+  - background thread polls Telegram and writes the same DB (see telegram.py-style
+    logic below); its changes broadcast to the board live too.
 
-State persists to $STATE_DIRECTORY/state.json (systemd sets STATE_DIRECTORY;
-falls back to the current dir when run by hand). Config via env:
-    WEBROOT (default ./ )   PORT (8182)   BIND (0.0.0.0)
+Config via env (see config.example.env):
+  WEBROOT (.)  PORT (8182)  BIND (0.0.0.0)
+  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   (optional — omit to disable Telegram)
+DB path: $TRACKER_DB or $STATE_DIRECTORY/tracker.db
 """
 
 import json
@@ -21,51 +24,34 @@ import posixpath
 import queue
 import sys
 import threading
+import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import db
 
 WEBROOT = os.path.abspath(os.environ.get("WEBROOT", "."))
 PORT = int(os.environ.get("PORT", "8182"))
 BIND = os.environ.get("BIND", "0.0.0.0")
-STATE_DIR = os.environ.get("STATE_DIRECTORY") or os.environ.get("STATE_DIR") or "."
-STATE_FILE = os.path.join(STATE_DIR, "state.json")
 
-VALID_STATUS = ("active", "blocked", "shipped", "backlog")
+TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-_lock = threading.Lock()
 _subscribers = set()  # set[queue.Queue]
-state = {"done": {}, "statusOverride": {}, "rev": 0}
 
 
-def load_state():
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        state["done"] = data.get("done", {}) or {}
-        state["statusOverride"] = data.get("statusOverride", {}) or {}
-        state["rev"] = int(data.get("rev", 0) or 0)
-    except FileNotFoundError:
-        pass
-    except Exception as e:  # corrupt file etc. — start clean rather than crash
-        sys.stderr.write(f"[statusboard] state load error: {e}\n")
+def log(msg):
+    sys.stderr.write(f"[tracker] {msg}\n")
+    sys.stderr.flush()
 
 
-def save_state():
-    tmp = STATE_FILE + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(state, f)
-        os.replace(tmp, STATE_FILE)  # atomic
-    except Exception as e:
-        sys.stderr.write(f"[statusboard] state save error: {e}\n")
+# ── broadcast ─────────────────────────────────────────────────────────────
 
-
-def snapshot():
-    return {"done": state["done"], "statusOverride": state["statusOverride"], "rev": state["rev"]}
-
-
-def broadcast():
-    payload = "data: " + json.dumps(snapshot()) + "\n\n"
+def push_state(origin=None):
+    state = db.get_state()
+    state["originId"] = origin
+    payload = "data: " + json.dumps(state) + "\n\n"
     for q in list(_subscribers):
         try:
             q.put_nowait(payload)
@@ -73,30 +59,49 @@ def broadcast():
             _subscribers.discard(q)
 
 
+# ── API op dispatch ───────────────────────────────────────────────────────
+
 def apply_op(op):
-    """Mutate authoritative state. Returns True if it changed. Caller holds _lock."""
-    t = op.get("op")
-    if t == "setDone":
-        key = op.get("key")
-        if not key:
+    """Return True if the board changed. Raises nothing the caller can't handle."""
+    kind = op.get("op")
+    if kind == "addProject":
+        if not (op.get("name") or "").strip():
             return False
-        if op.get("value"):
-            state["done"][key] = True
-        else:
-            state["done"].pop(key, None)
-    elif t == "setStatus":
-        pid, st = op.get("id"), op.get("status")
-        if not pid or st not in VALID_STATUS:
+        db.add_project(op.get("category", "Other"), op["name"].strip(),
+                       description=op.get("description", ""), status=op.get("status", "Planning"),
+                       priority=op.get("priority", "Medium"), due_date=op.get("due_date") or None,
+                       parent_id=op.get("parent_id") or None)
+    elif kind == "updateProject":
+        if not op.get("id"):
             return False
-        state["statusOverride"][pid] = st
-    elif t == "reset":
-        state["done"] = {}
-        state["statusOverride"] = {}
+        db.update_project(op["id"], op.get("patch", {}))
+    elif kind == "deleteProject":
+        if not op.get("id"):
+            return False
+        db.delete_project(op["id"])
+    elif kind == "addTask":
+        if not (op.get("project_id") and (op.get("name") or "").strip()):
+            return False
+        db.add_task(op["project_id"], op["name"].strip(),
+                    state=op.get("state", "todo"), due_date=op.get("due_date") or None)
+    elif kind == "updateTask":
+        if not op.get("id"):
+            return False
+        db.update_task(op["id"], op.get("patch", {}))
+    elif kind == "deleteTask":
+        if not op.get("id"):
+            return False
+        db.delete_task(op["id"])
+    elif kind == "addCategory":
+        if not (op.get("name") or "").strip():
+            return False
+        db.add_category(op["name"].strip())
     else:
         return False
-    state["rev"] += 1
     return True
 
+
+# ── HTTP handler ──────────────────────────────────────────────────────────
 
 def content_type(path):
     ctype, _ = mimetypes.guess_type(path)
@@ -122,8 +127,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/state":
-            with _lock:
-                self._json(snapshot())
+            self._json(db.get_state())
             return
         if path == "/api/events":
             self._sse()
@@ -142,16 +146,18 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._json({"ok": False, "error": "bad json"}, 400)
             return
-        with _lock:
+        try:
             ok = apply_op(op)
-            if ok:
-                save_state()
-                broadcast()
-            rev = state["rev"]
-        self._json({"ok": ok, "rev": rev})
+        except Exception as e:
+            log(f"op error: {e}")
+            self._json({"ok": False, "error": "op failed"}, 500)
+            return
+        if ok:
+            push_state(op.get("originId"))
+        self._json({"ok": ok, "rev": db.get_rev()})
 
     def _sse(self):
-        self.close_connection = True  # long-lived stream; don't try to keep-alive after
+        self.close_connection = True
         q = queue.Queue(maxsize=128)
         _subscribers.add(q)
         try:
@@ -161,16 +167,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "keep-alive")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
-            with _lock:
-                first = "data: " + json.dumps(snapshot()) + "\n\n"
-            self.wfile.write(first.encode("utf-8"))
+            state = db.get_state()
+            state["originId"] = None
+            self.wfile.write(("data: " + json.dumps(state) + "\n\n").encode("utf-8"))
             self.wfile.flush()
             while True:
                 try:
                     msg = q.get(timeout=20)
                     self.wfile.write(msg.encode("utf-8"))
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")  # keep connection/proxies alive
+                    self.wfile.write(b": ping\n\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
@@ -204,16 +210,188 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def log_message(self, *args):
-        pass  # quiet; systemd/journald captures stderr for real errors
+        pass
 
+
+# ── Telegram poller (task tracking only; no Claude execution) ──────────────
+
+TG_API = f"https://api.telegram.org/bot{TG_TOKEN}" if TG_TOKEN else None
+DEFAULT_CATEGORY = "Other"
+DEFAULT_PRIORITY = "Medium"
+VALID_PRIORITIES = {"critical", "high", "medium", "low"}
+
+
+def _cat_aliases():
+    return {c.lower().replace("-", " ").replace("_", " "): c for c in db.category_names()}
+
+
+def tg_call(method, params):
+    url = f"{TG_API}/{method}"
+    data = json.dumps(params).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def tg_reply(text):
+    try:
+        tg_call("sendMessage", {"chat_id": TG_CHAT, "text": text})
+    except Exception as e:
+        log(f"telegram reply failed: {e}")
+
+
+def parse_task_message(text):
+    """'#Category !Priority Title | Description' -> (category, priority, title, description)."""
+    aliases = _cat_aliases()
+    tokens = text.strip().split()
+    category, priority = DEFAULT_CATEGORY, DEFAULT_PRIORITY
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith("#"):
+            key = tok[1:].lower().replace("-", " ").replace("_", " ")
+            if key in aliases:
+                category = aliases[key]; i += 1; continue
+        if tok.startswith("!"):
+            key = tok[1:].lower()
+            if key in VALID_PRIORITIES:
+                priority = key.capitalize(); i += 1; continue
+        break
+    rest = " ".join(tokens[i:]).strip()
+    if not rest:
+        return None
+    if "|" in rest:
+        title, desc = rest.split("|", 1)
+        return category, priority, title.strip(), desc.strip()
+    return category, priority, rest, ""
+
+
+def tg_cmd_help():
+    cats = "\n".join(f"  #{c}" for c in db.category_names())
+    tg_reply(
+        "Add a project:\n"
+        "#TAK-CAP !High Radio config tool | Needs the new repeater list\n\n"
+        f"Categories:\n{cats}\n\n"
+        "Priorities: !Critical !High !Medium !Low (default Medium)\n\n"
+        "Commands:\n"
+        "/status - active projects\n"
+        "/find <keyword> - search\n"
+        "/task <ProjectID> <task text> - add a task to a project\n"
+        "/done <ProjectID> - mark a project Complete\n"
+        "/categories - list categories")
+
+
+def tg_cmd_status():
+    tops = [p for p in db.summary() if p["status"] != "Complete"]
+    if not tops:
+        tg_reply("No active projects.")
+        return
+    lines = [f"{p['id']} [{p['category']}] {p['name']} - {p['status']}/{p['priority']}" for p in tops[:20]]
+    tg_reply(f"Active projects ({len(tops)}):\n" + "\n".join(lines))
+
+
+def tg_cmd_find(kw):
+    if not kw:
+        tg_reply("Usage: /find <keyword>"); return
+    m = db.find_projects(kw)
+    if not m:
+        tg_reply(f'No projects matching "{kw}".'); return
+    tg_reply(f"Found {len(m)}:\n" + "\n".join(f"{p['id']} [{p['category']}] {p['name']} - {p['status']}" for p in m))
+
+
+def tg_cmd_done(pid):
+    if not pid:
+        tg_reply("Usage: /done <ProjectID>, e.g. /done TC-001"); return
+    p = db.get_project(pid.upper())
+    if not p:
+        tg_reply(f"No project with ID {pid}."); return
+    db.update_project(p["id"], {"status": "Complete"})
+    tg_reply(f"✅ Marked {p['id']} ({p['name']}) Complete.")
+
+
+def tg_cmd_task(rest):
+    parts = rest.split(None, 1)
+    if len(parts) < 2:
+        tg_reply("Usage: /task <ProjectID> <task text>"); return
+    pid, text = parts[0].upper(), parts[1].strip()
+    p = db.get_project(pid)
+    if not p:
+        tg_reply(f"No project with ID {pid}."); return
+    db.add_task(p["id"], text)
+    tg_reply(f'➕ Added task to {p["id"]}: "{text}"')
+
+
+def tg_handle(text):
+    low = text.strip().lower()
+    if low in ("/start", "/help"):
+        tg_cmd_help(); return True
+    if low in ("/categories", "/sheets", "/list"):
+        tg_reply("Categories:\n" + "\n".join(f"  #{c}" for c in db.category_names())); return True
+    if low == "/status":
+        tg_cmd_status(); return True
+    if low.startswith("/find"):
+        tg_cmd_find(text.strip()[5:].strip()); return True
+    if low.startswith("/task"):
+        tg_cmd_task(text.strip()[5:].strip()); return True
+    if low.startswith("/done"):
+        tg_cmd_done(text.strip()[5:].strip()); return True
+    parsed = parse_task_message(text)
+    if not parsed:
+        tg_reply("Couldn't parse that. Send /help for the format."); return False
+    category, priority, title, desc = parsed
+    pid = db.add_project(category, title, description=desc, priority=priority)
+    tg_reply(f'✅ Added {pid} to {category}: "{title}" ({priority}).')
+    log(f"telegram added project {pid} [{category}] {title}")
+    return True
+
+
+def telegram_loop():
+    log(f"telegram poller started (chat {TG_CHAT})")
+    offset = int(db.meta_get("tg_offset", "0") or "0")
+    while True:
+        try:
+            resp = tg_call("getUpdates", {"offset": offset + 1, "timeout": 25})
+        except Exception as e:
+            log(f"getUpdates failed: {e}")
+            time.sleep(5)
+            continue
+        if not resp.get("ok"):
+            time.sleep(5)
+            continue
+        changed = False
+        for upd in resp.get("result", []):
+            offset = upd["update_id"]
+            msg = upd.get("message", {})
+            chat_id = str(msg.get("chat", {}).get("id", ""))
+            text = msg.get("text", "")
+            if chat_id != TG_CHAT or not text:
+                continue
+            try:
+                if tg_handle(text):
+                    changed = True
+            except Exception as e:
+                log(f"telegram handle error: {e}")
+        db.meta_set("tg_offset", offset)
+        if changed:
+            push_state(origin="telegram")
+
+
+def start_telegram():
+    if not (TG_TOKEN and TG_CHAT):
+        log("telegram disabled (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set)")
+        return
+    t = threading.Thread(target=telegram_loop, name="telegram", daemon=True)
+    t.start()
+
+
+# ── main ──────────────────────────────────────────────────────────────────
 
 def main():
-    load_state()
+    db.init()
+    start_telegram()
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     httpd.daemon_threads = True
-    sys.stderr.write(
-        f"[statusboard] serving {WEBROOT} on {BIND}:{PORT} | state file: {STATE_FILE}\n"
-    )
+    log(f"serving {WEBROOT} on {BIND}:{PORT} | db {db.DB_PATH}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

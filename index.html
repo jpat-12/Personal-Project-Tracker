@@ -3,749 +3,522 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Project Statusboard</title>
+<title>Project Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg: #0f1114;
-    --surface: #1c1f25;
-    --surface-2: #282c33;
-    --line: #454a53;
-    --ink: #f7f6f2;
-    --ink-dim: #c3c9d1;
-    --ink-faint: #9198a3;
-    --accent: #5cc8ff;      /* active / primary */
-    --accent-dim: #3a86ad;
-    --lime: #d4ff5c;        /* shipped */
-    --ember: #ff8258;       /* blocked */
-    --muted: #6b7280;       /* backlog */
+    --bg:#0f1114; --surface:#1c1f25; --surface-2:#282c33; --line:#454a53;
+    --ink:#f7f6f2; --ink-dim:#c3c9d1; --ink-faint:#9198a3;
+    --accent:#5cc8ff; --accent-dim:#3a86ad;
+    --lime:#d4ff5c; --ember:#ff8258; --amber:#f5c451; --muted:#6b7280; --plan:#6b8cae;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;}
-  body{
-    background:var(--bg);
-    color:var(--ink);
-    font-family:'Inter',sans-serif;
-    -webkit-font-smoothing:antialiased;
-    min-height:100vh;
-    touch-action:manipulation;
-    padding-bottom:env(safe-area-inset-bottom);
-  }
-  .wrap{max-width:960px;margin:0 auto;padding:0 0 96px;}
+  body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;padding-bottom:env(safe-area-inset-bottom);}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 0 96px;}
 
-  /* ---------- Sidebar / header ---------- */
-  .sidebar{
-    padding:20px 16px 14px;
-    border-bottom:1px solid var(--line);
-    background:var(--bg);
-  }
-  .sidebar .progress-block,
-  .sidebar .stat-strip{ padding-left:0; padding-right:0; }
+  /* sidebar */
+  .sidebar{padding:20px 16px 14px;border-bottom:1px solid var(--line);background:var(--bg);}
   .brand-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;}
-  h1{
-    font-family:'Oswald',sans-serif;
-    font-weight:700;
-    letter-spacing:0.04em;
-    text-transform:uppercase;
-    font-size:26px;
-    margin:0;
-  }
+  h1{font-family:'Oswald',sans-serif;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;font-size:24px;margin:0;}
   h1 span{color:var(--accent);}
-  .sub{
-    font-size:12.5px;
-    color:var(--ink-dim);
-    margin-top:4px;
-    letter-spacing:0.02em;
-  }
-  .reset-btn{
-    background:none;border:1px solid var(--line);color:var(--ink-faint);
-    font-family:'Inter';font-size:11px;letter-spacing:0.05em;text-transform:uppercase;
-    padding:10px 12px;border-radius:3px;cursor:pointer;transition:.15s;min-height:40px;
-    touch-action:manipulation;
-  }
-  .reset-btn:hover{border-color:var(--ember);color:var(--ember);}
-
-  /* ---------- Filter rail ---------- */
-  .rail-scroll{
-    overflow-x:auto;
-    margin-top:16px;
-    padding-bottom:6px;
-    scrollbar-width:thin;
-    scroll-snap-type:x proximity;
-    -webkit-overflow-scrolling:touch;
-  }
-  .rail{
-    display:flex;
-    gap:6px;
-    min-width:max-content;
-  }
-  .tab{
-    font-family:'JetBrains Mono',monospace;
-    flex:0 0 auto;
-    min-width:84px;
-    min-height:44px;
-    padding:8px 14px;
-    text-align:center;
-    border-radius:4px;
-    border:1px solid var(--line);
-    background:var(--surface);
-    cursor:pointer;
-    transition:.15s;
-    position:relative;
-    scroll-snap-align:start;
-  }
-  .tab .n{display:block;font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--ink-dim);text-transform:uppercase;}
-  .tab .c{display:block;font-size:16px;font-weight:700;color:var(--ink);margin-top:2px;}
+  .sub{font-size:12px;color:var(--ink-dim);margin-top:4px;letter-spacing:0.02em;}
+  .rail-scroll{overflow-x:auto;margin-top:14px;padding-bottom:6px;scrollbar-width:thin;}
+  .rail{display:flex;gap:6px;min-width:max-content;}
+  .tab{font-family:'JetBrains Mono',monospace;flex:0 0 auto;min-width:82px;min-height:44px;padding:8px 12px;text-align:left;border-radius:4px;border:1px solid var(--line);background:var(--surface);cursor:pointer;transition:.15s;display:flex;flex-direction:column;justify-content:center;}
+  .tab .n{font-size:10.5px;letter-spacing:0.04em;color:var(--ink-dim);text-transform:uppercase;white-space:nowrap;}
+  .tab .c{font-size:15px;font-weight:700;color:var(--ink);margin-top:2px;}
   .tab.active{border-color:var(--accent);background:var(--surface-2);}
-  .tab.active .c{color:var(--accent);}
-  .tab.active .n{color:var(--accent);}
+  .tab.active .c,.tab.active .n{color:var(--accent);}
   .tab:hover:not(.active){border-color:#4a4f57;}
 
-  /* ---------- Progress ---------- */
-  .progress-block{padding:16px 20px 0;}
-  .progress-label{
-    display:flex;justify-content:space-between;
-    font-family:'JetBrains Mono',monospace;
-    font-size:11px;color:var(--ink-dim);margin-bottom:6px;
-  }
+  .progress-block{padding:16px 0 0;}
+  .progress-label{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim);margin-bottom:6px;}
   .progress-track{height:5px;background:var(--surface-2);border-radius:3px;overflow:hidden;}
   .progress-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s;}
+  .stat-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:14px 0 0;}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:5px;padding:10px 8px;text-align:center;}
+  .stat .v{font-family:'Oswald';font-size:20px;font-weight:600;line-height:1;}
+  .stat .k{font-family:'JetBrains Mono';font-size:8px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-top:5px;}
+  .stat.active .v{color:var(--accent);} .stat.blocked .v{color:var(--ember);} .stat.review .v{color:var(--amber);} .stat.complete .v{color:var(--lime);}
+  .sidebar-foot{margin-top:12px;}
+  .mini-btn{background:none;border:1px dashed var(--line);color:var(--ink-faint);border-radius:4px;padding:9px 12px;cursor:pointer;font-family:'JetBrains Mono';font-size:11px;width:100%;}
+  .mini-btn:hover{border-color:var(--accent);color:var(--accent);}
 
-  /* ---------- Stat strip ---------- */
-  .stat-strip{
-    display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
-    padding:16px 20px 0;
-  }
-  .stat{
-    background:var(--surface);border:1px solid var(--line);border-radius:5px;
-    padding:11px 10px;text-align:center;
-  }
-  .stat .v{font-family:'Oswald';font-size:22px;font-weight:600;line-height:1;}
-  .stat .k{font-family:'JetBrains Mono';font-size:8.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);margin-top:5px;}
-  .stat.active .v{color:var(--accent);}
-  .stat.blocked .v{color:var(--ember);}
-  .stat.shipped .v{color:var(--lime);}
-  .stat.backlog .v{color:var(--muted);}
+  /* toolbar */
+  .toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 20px 0;flex-wrap:wrap;}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden;}
+  .seg-btn{background:var(--surface);border:none;color:var(--ink-dim);font-family:'JetBrains Mono';font-size:11px;padding:9px 13px;cursor:pointer;min-height:38px;}
+  .seg-btn.on{background:var(--surface-2);color:var(--accent);}
+  .btn-add{background:var(--accent);color:#06222f;border:none;border-radius:5px;font-weight:700;font-family:'Inter';font-size:12px;padding:10px 14px;cursor:pointer;min-height:38px;}
+  .btn-add:hover{filter:brightness(1.08);}
 
-  /* ---------- Section banner ---------- */
-  .focus-banner{
-    margin:18px 20px 8px;
-    padding:14px 16px;
-    background:var(--surface);
-    border:1px solid var(--line);
-    border-left:3px solid var(--accent);
-    border-radius:4px;
-  }
-  .focus-banner .day-tag{
-    font-family:'JetBrains Mono';font-size:11px;color:var(--accent);letter-spacing:0.08em;text-transform:uppercase;
-  }
-  .focus-banner h2{
-    font-family:'Oswald';font-size:19px;margin:2px 0 0;font-weight:600;letter-spacing:0.01em;
-  }
+  /* groups */
+  .group{margin-top:6px;}
+  .group-head{display:flex;align-items:center;gap:8px;padding:18px 20px 4px;}
+  .gh-label{font-family:'Oswald';font-size:15px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-dim);}
+  .gh-count{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-faint);background:var(--surface-2);padding:1px 7px;border-radius:8px;}
 
-  /* ---------- Empty panel ---------- */
-  .empty-panel{
-    margin:40px 20px;
-    padding:50px 20px;
-    text-align:center;
-    border:1px dashed var(--line);
-    border-radius:6px;
-  }
-  .empty-panel .big{font-family:'Oswald';font-size:30px;letter-spacing:0.06em;color:var(--ink-faint);text-transform:uppercase;}
-  .empty-panel p{color:var(--ink-dim);font-size:13.5px;max-width:380px;margin:10px auto 0;line-height:1.5;}
-
-  /* ---------- Project cards ---------- */
   .cards{padding:6px 20px;display:flex;flex-direction:column;gap:12px;}
-  .card{
-    background:var(--surface);
-    border:1px solid var(--line);
-    border-radius:6px;
-    padding:14px 16px 16px;
-  }
-  .card.flagship{border-color:#3a5f70;background:linear-gradient(180deg, #13212a 0%, var(--surface) 44px);}
-  .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
-  .ex-name{font-family:'Oswald';font-size:17px;font-weight:600;letter-spacing:0.01em;}
-  .tags{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;}
-  .tag{
-    font-family:'JetBrains Mono';font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;
-    padding:3px 7px;border-radius:3px;background:var(--surface-2);color:var(--ink-dim);
-  }
-  .tag.flag{background:rgba(92,200,255,0.15);color:var(--accent);}
+  .list{padding:6px 20px;display:flex;flex-direction:column;gap:6px;}
 
-  /* status badge (click to cycle) */
-  .status-badge{
-    font-family:'JetBrains Mono';font-size:10.5px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;
-    padding:8px 12px;border-radius:4px;cursor:pointer;transition:.15s;min-height:40px;
-    display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--surface-2);
-    flex:0 0 auto;user-select:none;touch-action:manipulation;
-  }
+  /* status + priority chips */
+  .status-badge{font-family:'JetBrains Mono';font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:7px 11px;border-radius:4px;cursor:default;display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--surface-2);flex:0 0 auto;user-select:none;}
+  .status-badge.click{cursor:pointer;} .status-badge.click:hover{border-color:var(--accent);}
   .status-badge .led{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
-  .status-badge[data-status="active"]{border-color:var(--accent-dim);color:var(--accent);}
-  .status-badge[data-status="active"] .led{background:var(--accent);box-shadow:0 0 6px var(--accent);}
-  .status-badge[data-status="blocked"]{border-color:#8a4a34;color:var(--ember);}
-  .status-badge[data-status="blocked"] .led{background:var(--ember);box-shadow:0 0 6px var(--ember);}
-  .status-badge[data-status="shipped"]{border-color:#6a8a2a;color:var(--lime);}
-  .status-badge[data-status="shipped"] .led{background:var(--lime);box-shadow:0 0 6px var(--lime);}
-  .status-badge[data-status="backlog"]{color:var(--ink-faint);}
-  .status-badge[data-status="backlog"] .led{background:var(--muted);}
+  .st-plan{color:var(--plan);} .st-plan .led{background:var(--plan);}
+  .st-active{color:var(--accent);} .st-active .led{background:var(--accent);box-shadow:0 0 6px var(--accent);}
+  .st-blocked{color:var(--ember);} .st-blocked .led{background:var(--ember);box-shadow:0 0 6px var(--ember);}
+  .st-review{color:var(--amber);} .st-review .led{background:var(--amber);}
+  .st-complete{color:var(--lime);} .st-complete .led{background:var(--lime);}
+  .st-backlog{color:var(--ink-faint);} .st-backlog .led{background:var(--muted);}
+  .tag{font-family:'JetBrains Mono';font-size:9.5px;letter-spacing:0.03em;text-transform:uppercase;padding:3px 7px;border-radius:3px;background:var(--surface-2);color:var(--ink-dim);}
+  .pri-crit{background:rgba(255,130,88,0.16);color:var(--ember);}
+  .pri-high{background:rgba(245,196,81,0.16);color:var(--amber);}
+  .pri-med{color:var(--ink-dim);} .pri-low{color:var(--ink-faint);}
+  .due{font-family:'JetBrains Mono';font-size:9.5px;padding:2px 6px;border-radius:3px;background:var(--surface-2);color:var(--ink-faint);}
+  .due-soon{color:var(--accent);border:1px solid var(--accent-dim);}
+  .due-over{color:var(--ember);border:1px solid #8a4a34;}
 
-  /* per-card progress */
-  .card-prog{display:flex;align-items:center;gap:10px;margin-top:13px;}
+  /* card */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px 15px;cursor:pointer;}
+  .card:hover{border-color:#4a4f57;}
+  .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+  .p-name{font-family:'Oswald';font-size:17px;font-weight:600;}
+  .chips{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;}
+  .card-prog{display:flex;align-items:center;gap:10px;margin-top:12px;}
   .card-prog .track{flex:1 1 auto;height:4px;background:var(--surface-2);border-radius:3px;overflow:hidden;}
   .card-prog .fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s;}
-  .card-prog .pct{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-dim);flex:0 0 auto;min-width:42px;text-align:right;}
-  .card.status-shipped .card-prog .fill{background:var(--lime);}
-  .card.status-blocked .card-prog .fill{background:var(--ember);}
+  .card-prog .pct{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-dim);flex:0 0 auto;}
+  .working-hint{font-family:'JetBrains Mono';font-size:11px;color:var(--accent);margin-top:9px;}
+  .note{font-size:11.5px;color:var(--ink-faint);margin-top:8px;line-height:1.4;}
+  .subcount{font-family:'JetBrains Mono';font-size:10.5px;color:var(--ink-faint);margin-top:8px;}
 
-  /* milestone plates */
-  .sets-row{
-    display:grid;
-    grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
-    gap:8px;
-    margin-top:14px;
-  }
-  .plate{
-    position:relative;
-    min-height:52px;
-    padding:9px 24px 9px 11px;
-    border-radius:5px;
-    border:1px solid var(--line);
-    background:var(--surface-2);
-    text-align:left;
-    cursor:pointer;
-    transition:.12s;
-    user-select:none;
-    touch-action:manipulation;
-    display:flex;align-items:center;
-  }
-  .plate:hover{border-color:#4a4f57;}
-  .plate .ms{font-family:'Inter';font-size:12px;font-weight:500;color:var(--ink-dim);line-height:1.3;}
-  .plate.done{
-    background:linear-gradient(180deg, rgba(212,255,92,0.16), rgba(212,255,92,0.05));
-    border-color:var(--lime);
-  }
-  .plate.done .ms{color:var(--ink);text-decoration:line-through;text-decoration-color:var(--lime-dim, #93b83a);}
-  .plate.done::after{
-    content:"\2713";position:absolute;top:50%;right:8px;transform:translateY(-50%);
-    font-size:12px;color:var(--lime);font-weight:700;
-  }
-  .plate::after{
-    content:"";position:absolute;top:50%;right:9px;transform:translateY(-50%);
-    width:11px;height:11px;border:1.5px solid var(--line);border-radius:3px;
-  }
+  /* list row */
+  .row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:5px;padding:10px 12px;cursor:pointer;margin-left:calc(var(--depth,0)*20px);}
+  .row:hover{border-color:#4a4f57;}
+  .row-led{width:9px;height:9px;border-radius:50%;flex:0 0 auto;}
+  .row-name{font-family:'Oswald';font-size:14px;flex:0 0 auto;}
+  .row-mid{flex:1 1 auto;display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-width:0;}
+  .row-prog{width:70px;flex:0 0 auto;} .row-prog .track{height:4px;background:var(--surface-2);border-radius:3px;overflow:hidden;} .row-prog .fill{height:100%;background:var(--accent);}
+  .row-count{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-dim);flex:0 0 auto;}
 
-  .card-bottom{
-    display:flex;justify-content:space-between;align-items:center;
-    margin-top:13px;padding-top:11px;border-top:1px solid var(--line);
-    flex-wrap:wrap;gap:8px;
-  }
-  .note{font-size:11.5px;color:var(--ink-faint);font-style:italic;max-width:62%;}
-  .repo-chip{
-    font-family:'JetBrains Mono';font-size:10.5px;letter-spacing:0.02em;
-    background:var(--surface-2);border:1px solid var(--line);color:var(--ink-dim);
-    padding:7px 11px;border-radius:4px;text-decoration:none;transition:.15s;
-    display:inline-flex;align-items:center;gap:6px;min-height:36px;
-  }
-  a.repo-chip:hover{border-color:var(--accent);color:var(--accent);}
+  /* detail */
+  .detail{background:var(--surface);border:1px solid var(--accent-dim);border-radius:6px;padding:14px 16px 16px;margin-left:calc(var(--depth,0)*20px);}
+  .detail.sub{border-color:var(--line);background:var(--surface-2);}
+  .detail-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;}
+  .dh-left{min-width:0;}
+  .d-name{font-family:'Oswald';font-size:18px;font-weight:600;cursor:pointer;}
+  .d-name .chev{font-size:10px;color:var(--ink-faint);margin-left:4px;}
+  .dh-right{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .icon-btn{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-dim);border-radius:4px;min-height:34px;min-width:34px;cursor:pointer;font-size:13px;}
+  .icon-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .icon-btn.danger:hover{border-color:var(--ember);color:var(--ember);}
+  .detail-desc{color:var(--ink-dim);font-size:13px;line-height:1.5;margin:10px 0;}
+  .detail-desc.muted{color:var(--ink-faint);font-style:italic;}
 
-  .legend{
-    margin:26px 20px 0;padding:12px 14px;
-    border:1px solid var(--line);border-radius:5px;
-    font-size:11.5px;color:var(--ink-faint);line-height:1.6;
-  }
+  .buckets{margin-top:12px;display:flex;flex-direction:column;gap:13px;}
+  .bucket h4{margin:0 0 5px;font-family:'JetBrains Mono';font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-dim);}
+  .bk-doing h4{color:var(--accent);} .bk-done h4{color:var(--lime);}
+  .bk-count{color:var(--ink-faint);}
+  .bucket-empty{color:var(--ink-faint);font-size:12px;padding:2px;}
+  .task{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:5px;background:var(--surface-2);margin-top:6px;}
+  .detail.sub .task{background:var(--surface);}
+  .task-toggle{cursor:pointer;width:19px;height:19px;border-radius:5px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+  .tk-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);}
+  .task-doing .tk-dot{background:var(--accent);box-shadow:0 0 6px var(--accent);}
+  .task-done .task-toggle{background:var(--lime);border-color:var(--lime);} .task-done .tk-dot{background:#1a2405;}
+  .task-label{flex:1 1 auto;cursor:pointer;font-size:13px;}
+  .task-done .task-label{text-decoration:line-through;color:var(--ink-faint);}
+  .task-due-input{background:transparent;border:1px solid var(--line);color:var(--ink-dim);border-radius:4px;font-size:11px;padding:3px 5px;font-family:'JetBrains Mono';}
+  .task-del{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:17px;line-height:1;padding:0 2px;}
+  .task-del:hover{color:var(--ember);}
+  .add-row{margin-top:10px;}
+  .add-input{width:100%;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:9px 11px;font-size:12px;font-family:'Inter';}
+  .detail.sub .add-input{background:var(--surface);}
+  .subs{margin-top:14px;border-top:1px solid var(--line);padding-top:11px;}
+  .subs h4{margin:0 0 8px;font-family:'JetBrains Mono';font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-dim);}
+  .subs .card,.subs .row,.subs .detail{margin-top:8px;}
+  .add-sub-btn{margin-top:8px;background:none;border:1px dashed var(--line);color:var(--ink-faint);border-radius:4px;padding:8px 11px;cursor:pointer;font-size:12px;}
+  .add-sub-btn:hover{border-color:var(--accent);color:var(--accent);}
+
+  .empty-panel{margin:36px 20px;padding:46px 20px;text-align:center;border:1px dashed var(--line);border-radius:6px;}
+  .empty-panel .big{font-family:'Oswald';font-size:26px;letter-spacing:0.05em;color:var(--ink-faint);text-transform:uppercase;}
+  .empty-panel p{color:var(--ink-dim);font-size:13px;max-width:400px;margin:10px auto 0;line-height:1.5;}
+
+  .legend{margin:26px 20px 0;padding:12px 14px;border:1px solid var(--line);border-radius:5px;font-size:11.5px;color:var(--ink-faint);line-height:1.6;}
   .legend b{color:var(--ink-dim);}
+  footer{text-align:center;padding:24px 20px 0;font-family:'JetBrains Mono';font-size:10px;color:var(--ink-faint);letter-spacing:0.04em;}
+  #loading{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono';color:var(--ink-faint);font-size:12px;letter-spacing:0.08em;text-transform:uppercase;z-index:100;}
+  #conn{position:fixed;left:0;right:0;bottom:0;background:var(--ember);color:#2a0f06;font-family:'JetBrains Mono';font-size:11px;text-align:center;padding:8px;transform:translateY(110%);transition:.25s;z-index:60;}
+  #conn.show{transform:translateY(0);}
 
-  footer{
-    text-align:center;padding:26px 20px 0;
-    font-family:'JetBrains Mono';font-size:10px;color:var(--ink-faint);letter-spacing:0.04em;
-  }
+  /* modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(6,8,10,0.72);display:none;align-items:flex-start;justify-content:center;padding:36px 16px;z-index:200;overflow-y:auto;}
+  .modal-overlay.show{display:flex;}
+  .modal{background:var(--surface);border:1px solid var(--line);border-radius:8px;width:100%;max-width:520px;padding:18px 20px 20px;}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .modal-head h3{font-family:'Oswald';margin:0;font-size:18px;}
+  .modal label{display:block;font-family:'JetBrains Mono';font-size:10.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--ink-faint);margin-top:12px;}
+  .modal input:not([type=checkbox]),.modal textarea,.modal select{width:100%;margin-top:5px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:5px;padding:9px 10px;font-family:'Inter';font-size:13px;}
+  .m-row{display:flex;gap:12px;flex-wrap:wrap;} .m-row label{flex:1;min-width:120px;}
+  .modal-actions{display:flex;justify-content:space-between;align-items:center;margin-top:18px;gap:10px;flex-wrap:wrap;}
+  .modal-actions>div{display:flex;gap:8px;}
+  .btn-ghost{background:none;border:1px solid var(--line);color:var(--ink-dim);border-radius:5px;padding:10px 14px;cursor:pointer;}
+  .btn-danger{background:none;border:1px solid #8a4a34;color:var(--ember);border-radius:5px;padding:10px 14px;cursor:pointer;}
 
-  #loading{
-    position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;
-    font-family:'JetBrains Mono';color:var(--ink-faint);font-size:12px;letter-spacing:0.08em;text-transform:uppercase;z-index:100;
-  }
-
-  @media (max-width:560px){
-    .ex-name{font-size:15px;}
-    .note{max-width:100%;}
-    .card{padding:12px 13px 14px;}
-    .card-bottom{flex-direction:column;align-items:stretch;}
-    .repo-chip{justify-content:center;}
-    h1{font-size:22px;}
-    .focus-banner{margin:14px 14px 8px;}
-    .cards{padding:6px 14px;}
-    .progress-block,.stat-strip{padding-left:14px;padding-right:14px;}
-    .stat-strip{grid-template-columns:repeat(2,1fr);}
-    .sets-row{grid-template-columns:1fr;}
-  }
-
-  /* ================= DESKTOP LAYOUT ================= */
   @media (min-width:900px){
-    .wrap{
-      display:grid;
-      grid-template-columns:300px minmax(0,1fr);
-      max-width:1500px;
-      align-items:start;
-      padding-bottom:0;
-    }
-
-    /* sticky full-height sidebar */
-    .sidebar{
-      position:sticky;top:0;
-      height:100vh;
-      overflow-y:auto;
-      border-bottom:none;
-      border-right:1px solid var(--line);
-      padding:26px 22px;
-      display:flex;flex-direction:column;gap:22px;
-    }
-    .brand-row{flex-direction:column;align-items:stretch;gap:12px;}
-    .reset-btn{align-self:flex-start;}
-
-    /* vertical nav rail */
+    .wrap{display:grid;grid-template-columns:300px minmax(0,1fr);max-width:1500px;align-items:start;padding-bottom:0;}
+    .sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;border-bottom:none;border-right:1px solid var(--line);padding:26px 22px;display:flex;flex-direction:column;gap:20px;}
+    .brand-row{flex-direction:column;align-items:stretch;gap:10px;}
     .rail-scroll{overflow:visible;margin-top:0;padding-bottom:0;}
-    .rail{flex-direction:column;min-width:0;gap:7px;}
-    .tab{
-      width:100%;min-width:0;
-      display:flex;align-items:center;justify-content:space-between;
-      text-align:left;padding:12px 15px;
-    }
-    .tab .n{margin:0;font-size:11px;}
-    .tab .c{margin:0;font-size:17px;line-height:1;}
-
-    .sidebar .progress-block{padding:0;}
-    .sidebar .stat-strip{padding:0;grid-template-columns:repeat(2,1fr);}
-
-    /* main column */
+    .rail{flex-direction:column;gap:6px;}
+    .tab{width:100%;flex-direction:row;align-items:center;justify-content:space-between;}
+    .progress-block,.stat-strip,.sidebar-foot{padding-left:0;padding-right:0;}
     .main{padding:6px 6px 60px;min-width:0;}
-    .focus-banner{margin:22px 20px 12px;}
-
-    /* masonry card grid — flows into 2–3 columns by width */
-    .cards{
-      display:block;
-      column-width:430px;
-      column-gap:16px;
-      padding:6px 20px;
-    }
-    .card{break-inside:avoid;margin-bottom:16px;-webkit-column-break-inside:avoid;}
-
-    /* two milestone columns inside wider cards */
-    .sets-row{grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));}
-
-    .legend{margin:26px 20px 0;}
-    footer{padding-bottom:24px;}
+    .cards{column-width:440px;column-gap:16px;display:block;padding:6px 20px;}
+    .cards>.card,.cards>.detail{break-inside:avoid;margin-bottom:16px;}
   }
-
-  /* extra-wide: give the sidebar a touch more room */
-  @media (min-width:1300px){
-    .wrap{grid-template-columns:320px minmax(0,1fr);}
-    .cards{column-width:400px;}
-  }
+  @media (min-width:1300px){ .wrap{grid-template-columns:320px minmax(0,1fr);} .cards{column-width:410px;} }
 </style>
 </head>
 <body>
-
-<div id="loading">Loading board…</div>
-
+<div id="loading">Loading tracker…</div>
 <div class="wrap" id="app" style="display:none;">
   <aside class="sidebar">
     <div class="brand-row">
       <div>
-        <h1>PROJECT<span>·</span>STATUSBOARD</h1>
-        <div class="sub">PORTFOLIO TRACKER · TAP MILESTONES · CLICK STATUS TO CYCLE</div>
+        <h1>PROJECT<span>·</span>TRACKER</h1>
+        <div class="sub">CATEGORY → PROJECT → TASKS · LIVE · TELEGRAM-FED</div>
       </div>
-      <button class="reset-btn" id="resetBtn">Reset progress</button>
     </div>
-    <div class="rail-scroll">
-      <div class="rail" id="rail"></div>
-    </div>
+    <div class="rail-scroll"><div class="rail" id="rail"></div></div>
     <div class="progress-block">
-      <div class="progress-label"><span id="progLabel">PORTFOLIO PROGRESS</span><span id="progPct">0%</span></div>
+      <div class="progress-label"><span id="progLabel">PORTFOLIO</span><span id="progPct">0%</span></div>
       <div class="progress-track"><div class="progress-fill" id="progFill" style="width:0%"></div></div>
     </div>
     <div class="stat-strip" id="statStrip"></div>
+    <div class="sidebar-foot"><button class="mini-btn" id="addCatBtn">+ Add category</button></div>
   </aside>
-
   <main class="main">
-  <div id="boardContent"></div>
-
-  <div class="legend">
-    <b>How it works —</b> the rail up top filters projects by status. Each project auto-computes a progress bar from its milestones — <b>tap a milestone</b> to mark it done. <b>Click a project's status badge</b> to cycle it: Active → Blocked → Shipped → Backlog. Swipe left/right to move between status filters. Everything saves automatically to this browser via <b>localStorage</b>. To add or rename projects and milestones, edit the <b>SEED</b> array near the top of the <script> block in this file.
-  </div>
-
-  <footer>PORTFOLIO STATUSBOARD · DATA STAYS IN THIS BROWSER</footer>
+    <div class="toolbar" id="toolbar"></div>
+    <div id="boardContent"></div>
+    <div class="legend">
+      <b>Live &amp; Telegram-fed —</b> this board reads your tracker database directly; anything you add or change via your Telegram bot (or on another device) shows up here within a second, no refresh. Click a project to expand it: tap a task to advance it <b>To&nbsp;Do → Working → Completed</b>. Use <b>✎</b> to edit, <b>+ task</b> / <b>+ sub-project</b> inside a project, and <b>+ Add project</b> up top.
+    </div>
+    <footer>PERSONAL PROJECT TRACKER · SQLITE-BACKED · SYNCED ACROSS DEVICES</footer>
   </main>
 </div>
+<div class="modal-overlay" id="modalOverlay"><div class="modal"></div></div>
+<div id="conn">Disconnected — changes won’t save until reconnected.</div>
 
 <script>
-// ================= SEED DATA — edit this to change your board =================
-// status: 'active' | 'blocked' | 'shipped' | 'backlog'   (this is just the default; you can cycle it live)
-// flagship:true adds a highlighted card. repo is an optional path/URL shown as a chip.
-const SEED = [
-  { id:'fieldtak', name:'FieldTAK (CAP Field Plugin V2)', cat:'ATAK', status:'active', flagship:true,
-    repo:'CivilAirPatrol-Field-PluginV2',
-    note:'CAP ATAK plugin — ArcGIS feature service integration, ATAK 5.6.0 SDK.',
-    milestones:['Feature service sync','Sign-in / sortie flow','WMIRS auth','Icon / display config','5.7.0 build'] },
-
-  { id:'efjohnson', name:'EFJohnson 5112 Plugin', cat:'ATAK', status:'active',
-    repo:'ATAK-Plugin_EFJohnson',
-    note:'CoT over VHF P25 packet data via USB serial.',
-    milestones:['USB serial bridge','CoT encode/decode','main.jar bundling','Keystore staging','Field test'] },
-
-  { id:'tak_icu', name:'TAK ICU Video Streamer', cat:'ATAK', status:'active',
-    repo:'ATAK-Plugin_TAK_ICU',
-    note:'Plugin suite + video streamer; build_output.txt currently open.',
-    milestones:['Streamer core','Plugin suite wiring','Build passes','Package release'] },
-
-  { id:'webtak_video', name:'WebTAK Video Viewer', cat:'WebTAK', status:'active',
-    repo:'WebTAK-Plugin-VideoViewer',
-    note:'Floating resizable RTSP/SRT/RTMP/HLS windows via TAK Restreamer (MediaMTX).',
-    milestones:['Framework-free engine','WebTAK shim','Multi-window layout','Restreamer hookup'] },
-
-  { id:'nodered', name:'TAK Survey123 (Node-RED)', cat:'Integration', status:'active',
-    repo:'TAK-Survey123-NodeRED',
-    note:'Node-RED-only port of the Esri integration — no Python/systemd.',
-    milestones:['Port flows.json','Survey123 ingest','CoT output','Remove Python deps'] },
-
-  { id:'featurelink', name:'FeatureLink + Display Config', cat:'ATAK', status:'active',
-    repo:'ATAK-Plugin_FeatureLink',
-    note:'Feature linking plugin with shared icon/display config set.',
-    milestones:['Link engine','Display config icons','ATAK integration','Docs'] },
-
-  { id:'iema', name:'IEMA Data Plugin', cat:'ATAK', status:'active',
-    repo:'ATAK-Plugin_IEMA-Data',
-    note:'Illinois EMA data feed into ATAK.',
-    milestones:['Data source','Parser','ATAK overlay','Refresh scheduling'] },
-
-  { id:'cloudtak_sb', name:'CloudTAK StatusBoard (CAP)', cat:'CloudTAK', status:'active',
-    repo:'CloudTAK-Plugin_StatusBoard_CAP',
-    note:'Status board plugin for CloudTAK, CAP-flavored.',
-    milestones:['Board layout','Live status feed','CAP theming'] },
-
-  { id:'wmirs', name:'WMIRS TAK Interface', cat:'Integration', status:'blocked',
-    repo:'WMIRS-TAK Interface',
-    note:'Bridges WMIRS auth/data to TAK — waiting on auth flow (HAR captures on hand).',
-    milestones:['Auth capture','Token flow','Data mapping','TAK push'] },
-
-  { id:'sitreps', name:'Daily SitReps', cat:'Ops', status:'active',
-    repo:'DailySitReps',
-    note:'Automated daily situation reports.',
-    milestones:['Template','Data pull','Scheduling','Distribution'] },
-
-  { id:'quickcapture', name:'QuickCapture', cat:'ATAK', status:'shipped',
-    repo:'ATAK-Plugin-QuickCapture',
-    note:'Shipped — 1.5.0 for ATAK 5.7.0-civ release.',
-    milestones:['Capture flow','5.7.0 build','Release zip'] },
-
-  { id:'airtak', name:'AirTAK', cat:'ATAK', status:'backlog',
-    repo:'ATAK-Plugin_AirTAK',
-    note:'Airborne-focused ATAK plugin.',
-    milestones:['Scope','Prototype','Integration'] },
-
-  { id:'openatlas', name:'OpenAtlas', cat:'ATAK', status:'backlog',
-    repo:'ATAK-Plugin_OpenAtlas',
-    note:'Open basemap / atlas plugin.',
-    milestones:['Tile source','Overlay UI','Offline cache'] },
-
-  { id:'howto', name:'How-To Guide Plugin', cat:'ATAK', status:'backlog',
-    repo:'ATAK-Plugin_HowToGuide',
-    note:'In-app guidance / help plugin.',
-    milestones:['Content model','Viewer UI','Package'] },
-
-  { id:'infra', name:'infra-TAK', cat:'Infra', status:'active',
-    repo:'infra-TAK',
-    note:'TAK server / supporting infrastructure.',
-    milestones:['Server config','Restreamer','Backups','Monitoring'] },
-];
-// ============================================================================
-
+// ---------------- constants ----------------
+const STATUSES = ["Planning","Active","Blocked","Review","Complete","Backlog"];
 const STATUS_META = {
-  active:  { label:'Active',  order:0 },
-  blocked: { label:'Blocked', order:1 },
-  shipped: { label:'Shipped', order:2 },
-  backlog: { label:'Backlog', order:3 },
+  Planning:{cls:'st-plan'}, Active:{cls:'st-active'}, Blocked:{cls:'st-blocked'},
+  Review:{cls:'st-review'}, Complete:{cls:'st-complete'}, Backlog:{cls:'st-backlog'},
 };
-const STATUS_CYCLE = ['active','blocked','shipped','backlog'];
+const STATUS_CYCLE = ["Planning","Active","Blocked","Review","Complete","Backlog"];
+const PRIORITIES = ["Critical","High","Medium","Low"];
+const PRI_CLS = {Critical:'pri-crit',High:'pri-high',Medium:'pri-med',Low:'pri-low'};
+const TASK_CYCLE = ["todo","doing","done"];
 
-const FILTERS = [
-  { key:'all',     label:'All' },
-  { key:'active',  label:'Active' },
-  { key:'blocked', label:'Blocked' },
-  { key:'shipped', label:'Shipped' },
-  { key:'backlog', label:'Backlog' },
-];
+// ---------------- state ----------------
+let data = { categories:[], projects:[], tasks:[], rev:0 };
+let ui = { view:'gallery', filterCat:'all', open:{} };
+const MY_ID = 'u'+Math.random().toString(36).slice(2,9);
+const UI_KEY = 'ppt-ui-v3';
+const CACHE_KEY = 'ppt-cache-v3';
+let SYNC = false, es = null;
 
-// ---------------- State ----------------
-let state = { done:{}, statusOverride:{}, filter:'all' };
-const STORAGE_KEY = 'project-statusboard-v1';
+function saveUI(){ try{ localStorage.setItem(UI_KEY, JSON.stringify(ui)); }catch(e){} }
+function loadUI(){ try{ const u=JSON.parse(localStorage.getItem(UI_KEY)||'null'); if(u) ui=Object.assign(ui,u); }catch(e){} ui.open=ui.open||{}; }
+function cache(){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify(data)); }catch(e){} }
 
-function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){ state = Object.assign({done:{}, statusOverride:{}, filter:'all'}, JSON.parse(raw)); }
-  }catch(e){ console.log('No saved board yet, starting fresh.'); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ---------------- dates ----------------
+function todayMid(){ const n=new Date(); return new Date(n.getFullYear(),n.getMonth(),n.getDate()); }
+function dueInfo(s, complete){
+  if(!s) return null;
+  const d=new Date(s+'T00:00:00'); if(isNaN(d)) return null;
+  const diff=Math.round((d-todayMid())/86400000);
+  let cls='';
+  if(!complete && diff<0) cls='due-over'; else if(!complete && diff<=7) cls='due-soon';
+  return {label:d.toLocaleDateString(undefined,{month:'short',day:'numeric'}), cls};
 }
-function saveState(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch(e){ console.error('Could not save board:', e); }
-}
+function dueBadge(s, complete){ const i=dueInfo(s,complete); return i?`<span class="due ${i.cls}">${i.label}</span>`:''; }
 
-// ---------------- Cross-device sync (optional; degrades to localStorage) ----------------
-// When served by server.py this talks to a shared backend and receives live
-// updates from other devices via Server-Sent Events. Opened without that
-// backend (file:// or a plain static host), everything silently falls back to
-// localStorage-only and still works.
-let SYNC = false;
-let evtSource = null;
+// ---------------- tree helpers ----------------
+function catNames(){ return data.categories.map(c=>c.name); }
+function topProjects(cat){ return data.projects.filter(p=>!p.parent_id && p.category===cat); }
+function childrenOf(pid){ return data.projects.filter(p=>p.parent_id===pid); }
+function tasksOf(pid){ return data.tasks.filter(t=>t.project_id===pid); }
+function projById(id){ return data.projects.find(p=>p.id===id); }
+function taskCounts(p){ const c={todo:0,doing:0,done:0,total:0}; tasksOf(p.id).forEach(t=>{c.total++; c[t.state||'todo']++;}); return c; }
+function projPct(p){ const c=taskCounts(p); return c.total?Math.round(c.done/c.total*100):(p.status==='Complete'?100:0); }
+function statusCounts(){ const c={}; STATUSES.forEach(s=>c[s]=0); data.projects.forEach(p=>{ if(c[p.status]!=null)c[p.status]++; }); return c; }
+function isDescendant(id, ofId){ let cur=projById(id), seen=new Set(); while(cur&&cur.parent_id&&!seen.has(cur.id)){ seen.add(cur.id); if(cur.parent_id===ofId)return true; cur=projById(cur.parent_id);} return false; }
 
-function applyShared(d){
-  // 'filter' is a per-device UI preference and is intentionally NOT synced.
-  state.done = d.done || {};
-  state.statusOverride = d.statusOverride || {};
-  saveState();
-  renderAll();
-}
-
+// ---------------- sync ----------------
+function setConn(ok){ document.getElementById('conn').classList.toggle('show', !ok); }
 async function sendOp(op){
-  if(!SYNC) return;
+  op.originId = MY_ID;
   try{
-    await fetch('api/op', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(op)
-    });
-  }catch(e){ /* offline — localStorage keeps the change until reconnect */ }
+    const r = await fetch('api/op',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(op)});
+    if(!r.ok) throw 0;
+    setConn(true);
+  }catch(e){ setConn(false); }
+}
+function ingest(d){ data={categories:d.categories||[],projects:d.projects||[],tasks:d.tasks||[],rev:d.rev||0}; cache(); render(); }
+async function connect(){
+  try{
+    const r = await fetch('api/state',{cache:'no-store'}); if(!r.ok) throw 0;
+    ingest(await r.json()); SYNC=true; setConn(true);
+  }catch(e){ SYNC=false; setConn(false); return; }
+  try{
+    es = new EventSource('api/events');
+    es.onmessage = e=>{ try{ ingest(JSON.parse(e.data)); setConn(true); }catch(_){} };
+    es.onerror = ()=> setConn(false);
+  }catch(e){}
 }
 
-async function connectSync(){
-  try{
-    const res = await fetch('api/state', {cache:'no-store'});
-    if(!res.ok) throw new Error('no backend');
-    const d = await res.json();
-    SYNC = true;
-    const localHas = Object.keys(state.done).length || Object.keys(state.statusOverride).length;
-    const serverEmpty = (d.rev||0) === 0
-      && !Object.keys(d.done||{}).length
-      && !Object.keys(d.statusOverride||{}).length;
-    if(serverEmpty && localHas){
-      // First run against a fresh backend: seed the shared board from this
-      // device's local progress instead of wiping it.
-      for(const k in state.done){ if(state.done[k]) sendOp({op:'setDone', key:k, value:true}); }
-      for(const id in state.statusOverride){ sendOp({op:'setStatus', id, status: state.statusOverride[id]}); }
-    }else{
-      applyShared(d);       // adopt the shared board on load
-    }
-  }catch(e){
-    SYNC = false;
-    return;                 // standalone / localStorage-only mode
-  }
-  try{
-    evtSource = new EventSource('api/events');
-    evtSource.onmessage = (e)=>{ try{ applyShared(JSON.parse(e.data)); }catch(_){} };
-    evtSource.onerror = ()=>{ /* EventSource reconnects on its own */ };
-  }catch(e){ /* SSE unsupported — changes still sync on next page load */ }
-}
+// optimistic local mutation for snappy toggles (server SSE reconciles)
+function localTask(id, patch){ const t=data.tasks.find(x=>x.id===id); if(t){ Object.assign(t,patch); render(); } }
+function localProj(id, patch){ const p=projById(id); if(p){ Object.assign(p,patch); render(); } }
 
-// ---------------- Helpers ----------------
-function statusOf(p){ return state.statusOverride[p.id] || p.status; }
-function doneCount(p){
-  return p.milestones.reduce((n,_,i)=> n + (state.done[`${p.id}_m${i}`] ? 1 : 0), 0);
-}
-function projPct(p){
-  if(!p.milestones.length) return statusOf(p)==='shipped' ? 100 : 0;
-  return Math.round(doneCount(p)/p.milestones.length*100);
-}
-function statusCounts(){
-  const c = {active:0, blocked:0, shipped:0, backlog:0};
-  SEED.forEach(p=> c[statusOf(p)]++);
-  return c;
-}
-function visibleProjects(){
-  const list = state.filter==='all' ? SEED.slice() : SEED.filter(p=> statusOf(p)===state.filter);
-  return list.sort((a,b)=>{
-    const so = STATUS_META[statusOf(a)].order - STATUS_META[statusOf(b)].order;
-    if(so!==0) return so;
-    return projPct(b) - projPct(a);
-  });
-}
+// ---------------- rendering: sidebar ----------------
+function render(){ renderRail(); renderStats(); renderProgress(); renderToolbar(); renderBoard(); }
 
-// ---------------- Rendering ----------------
 function renderRail(){
-  const rail = document.getElementById('rail');
-  rail.innerHTML = '';
-  const counts = statusCounts();
-  FILTERS.forEach(f=>{
-    const n = f.key==='all' ? SEED.length : counts[f.key];
-    const tab = document.createElement('div');
-    tab.className = 'tab' + (f.key===state.filter ? ' active' : '');
-    tab.innerHTML = `<span class="n">${f.label}</span><span class="c">${n}</span>`;
-    tab.onclick = ()=>{ state.filter = f.key; saveState(); renderAll(); };
-    rail.appendChild(tab);
-  });
-  const active = rail.querySelector('.tab.active');
-  if(active) active.scrollIntoView({behavior:'smooth', inline:'center', block:'nearest'});
+  const rail=document.getElementById('rail');
+  const tabs=[{key:'all',label:'All',n:data.projects.filter(p=>!p.parent_id).length}]
+    .concat(catNames().map(c=>({key:c,label:c,n:topProjects(c).length})));
+  rail.innerHTML = tabs.map(t=>`<div class="tab${ui.filterCat===t.key?' active':''}" data-cat="${esc(t.key)}"><span class="n">${esc(t.label)}</span><span class="c">${t.n}</span></div>`).join('');
 }
-
 function renderStats(){
-  const c = statusCounts();
-  const strip = document.getElementById('statStrip');
-  const cells = [
-    {cls:'active', k:'Active', v:c.active},
-    {cls:'blocked', k:'Blocked', v:c.blocked},
-    {cls:'shipped', k:'Shipped', v:c.shipped},
-    {cls:'backlog', k:'Backlog', v:c.backlog},
-  ];
-  strip.innerHTML = cells.map(x=>`<div class="stat ${x.cls}"><div class="v">${x.v}</div><div class="k">${x.k}</div></div>`).join('');
+  const c=statusCounts();
+  const cells=[['active','Active','Active'],['blocked','Blocked','Blocked'],['review','Review','Review'],['complete','Complete','Complete']];
+  document.getElementById('statStrip').innerHTML = cells.map(([cls,label,key])=>`<div class="stat ${cls}"><div class="v">${c[key]||0}</div><div class="k">${label}</div></div>`).join('');
+}
+function renderProgress(){
+  let total=0,done=0; data.projects.forEach(p=>{const c=taskCounts(p); total+=c.total; done+=c.done;});
+  const pct=total?Math.round(done/total*100):0;
+  document.getElementById('progLabel').textContent=`PORTFOLIO — ${done}/${total} TASKS`;
+  document.getElementById('progPct').textContent=pct+'%';
+  document.getElementById('progFill').style.width=pct+'%';
+}
+function renderToolbar(){
+  document.getElementById('toolbar').innerHTML = `
+    <div class="seg">
+      <button class="seg-btn${ui.view==='list'?' on':''}" data-view="list">List</button>
+      <button class="seg-btn${ui.view==='gallery'?' on':''}" data-view="gallery">Gallery</button>
+    </div>
+    <button class="btn-add" id="addProjectBtn">+ Add project</button>`;
 }
 
-function renderProgress(){
-  // Portfolio progress = milestones done across all projects
-  let total=0, done=0;
-  SEED.forEach(p=>{ total += p.milestones.length; done += doneCount(p); });
-  const pct = total ? Math.round(done/total*100) : 0;
-  document.getElementById('progLabel').textContent = `PORTFOLIO PROGRESS — ${done}/${total} MILESTONES`;
-  document.getElementById('progPct').textContent = pct + '%';
-  document.getElementById('progFill').style.width = pct + '%';
+// ---------------- rendering: board ----------------
+function statusBadge(p, clickable){
+  const m=STATUS_META[p.status]||STATUS_META.Planning;
+  return `<span class="status-badge ${m.cls}${clickable?' click':''}" ${clickable?`data-act="cycle-status" data-id="${p.id}"`:''}><span class="led"></span>${esc(p.status)}</span>`;
+}
+function priTag(p){ return `<span class="tag ${PRI_CLS[p.priority]||'pri-med'}">${esc(p.priority||'Medium')}</span>`; }
+function progBar(p){ const c=taskCounts(p); return `<div class="card-prog"><div class="track"><div class="fill" style="width:${projPct(p)}%"></div></div><div class="pct">${c.done}/${c.total}</div></div>`; }
+
+function cardHTML(p){
+  const doing=tasksOf(p.id).find(t=>t.state==='doing');
+  const subs=childrenOf(p.id).length;
+  return `<div class="card" data-act="open" data-id="${p.id}">
+    <div class="card-top">
+      <div><div class="p-name">${esc(p.name)}</div>
+        <div class="chips">${priTag(p)}${dueBadge(p.due_date,p.status==='Complete')}</div></div>
+      ${statusBadge(p,false)}
+    </div>
+    ${progBar(p)}
+    ${doing?`<div class="working-hint">▶ ${esc(doing.name)}</div>`:''}
+    ${p.description?`<div class="note">${esc(p.description)}</div>`:''}
+    ${subs?`<div class="subcount">▤ ${subs} sub-project${subs>1?'s':''}</div>`:''}
+  </div>`;
+}
+function rowHTML(p, depth){
+  const c=taskCounts(p), m=STATUS_META[p.status]||STATUS_META.Planning;
+  return `<div class="row" style="--depth:${depth||0}" data-act="open" data-id="${p.id}">
+    <span class="row-led ${m.cls}"><span class="led" style="width:9px;height:9px;border-radius:50%;display:block;background:currentColor"></span></span>
+    <span class="row-name">${esc(p.name)}</span>
+    <span class="row-mid">${priTag(p)}${dueBadge(p.due_date,p.status==='Complete')}</span>
+    <span class="row-prog"><span class="track"><span class="fill" style="width:${projPct(p)}%;display:block;height:100%"></span></span></span>
+    <span class="row-count">${c.done}/${c.total}</span>
+    ${statusBadge(p,false)}
+  </div>`;
+}
+function taskHTML(t){
+  const st=t.state||'todo';
+  return `<div class="task task-${st}">
+    <span class="task-toggle" data-act="cycle-task" data-id="${t.id}"><span class="tk-dot"></span></span>
+    <span class="task-label" data-act="cycle-task" data-id="${t.id}">${esc(t.name)}</span>
+    <input class="task-due-input" type="date" value="${t.due_date||''}" data-chg="task-due" data-id="${t.id}" title="Due date">
+    ${dueBadge(t.due_date, st==='done')}
+    <button class="task-del" data-act="del-task" data-id="${t.id}" title="Delete task">×</button>
+  </div>`;
+}
+function bucketHTML(title, tasks, cls){
+  return `<div class="bucket ${cls}"><h4>${title} <span class="bk-count">${tasks.length}</span></h4>${tasks.length?tasks.map(taskHTML).join(''):'<div class="bucket-empty">—</div>'}</div>`;
+}
+function detailHTML(p, depth){
+  const ts=tasksOf(p.id);
+  const doing=ts.filter(t=>t.state==='doing'), todo=ts.filter(t=>(t.state||'todo')==='todo'), done=ts.filter(t=>t.state==='done');
+  const kids=childrenOf(p.id);
+  const isSub = !!p.parent_id;
+  return `<div class="detail${isSub?' sub':''}" style="--depth:${depth||0}">
+    <div class="detail-head">
+      <div class="dh-left">
+        <div class="d-name" data-act="collapse" data-id="${p.id}">${esc(p.name)} <span class="chev">▲</span></div>
+        <div class="chips">${priTag(p)}${dueBadge(p.due_date,p.status==='Complete')}</div>
+      </div>
+      <div class="dh-right">
+        ${statusBadge(p,true)}
+        <button class="icon-btn" data-act="edit" data-id="${p.id}" title="Edit">✎</button>
+        <button class="icon-btn danger" data-act="del-project" data-id="${p.id}" title="Delete">🗑</button>
+      </div>
+    </div>
+    ${p.description?`<p class="detail-desc">${esc(p.description)}</p>`:'<p class="detail-desc muted">No description — use ✎ to add one.</p>'}
+    ${progBar(p)}
+    <div class="buckets">
+      ${bucketHTML('Currently Working', doing, 'bk-doing')}
+      ${bucketHTML('To Do', todo, 'bk-todo')}
+      ${bucketHTML('Completed', done, 'bk-done')}
+    </div>
+    <div class="add-row"><input class="add-input" placeholder="+ add task, press Enter" data-key="add-task" data-id="${p.id}"></div>
+    <div class="subs">
+      <h4>Sub-projects <span class="bk-count">${kids.length}</span></h4>
+      ${kids.map(ch=> projectNode(ch, (depth||0)+1)).join('')}
+      <button class="add-sub-btn" data-act="add-sub" data-id="${p.id}">+ sub-project</button>
+    </div>
+  </div>`;
+}
+function projectNode(p, depth){
+  if(ui.open[p.id]) return detailHTML(p, depth);
+  return ui.view==='list' ? rowHTML(p, depth) : cardHTML(p);
 }
 
 function renderBoard(){
-  const content = document.getElementById('boardContent');
-  content.innerHTML = '';
-
-  const f = FILTERS.find(x=>x.key===state.filter);
-  const banner = document.createElement('div');
-  banner.className = 'focus-banner';
-  const list = visibleProjects();
-  banner.innerHTML = `<div class="day-tag">${f.label}</div><h2>${list.length} project${list.length===1?'':'s'}${state.filter==='all'?' · all statuses':''}</h2>`;
-  content.appendChild(banner);
-
-  if(!list.length){
-    const empty = document.createElement('div');
-    empty.className = 'empty-panel';
-    empty.innerHTML = `<div class="big">Nothing here</div><p>No projects with status “${f.label}”. Pick another filter, or cycle a project's status badge into this bucket.</p>`;
-    content.appendChild(empty);
-    return;
+  const root=document.getElementById('boardContent');
+  const cats = ui.filterCat==='all' ? catNames() : [ui.filterCat];
+  let html='', any=false;
+  cats.forEach(cat=>{
+    const tops=topProjects(cat);
+    if(!tops.length) return;
+    any=true;
+    html += `<section class="group"><div class="group-head"><span class="gh-label">${esc(cat)}</span><span class="gh-count">${tops.length}</span></div>`;
+    html += ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
+    tops.forEach(p=>{ html += projectNode(p, 0); });
+    html += `</div></section>`;
+  });
+  if(!any){
+    html = `<div class="empty-panel"><div class="big">No projects</div><p>Nothing here yet. Add one with <b>+ Add project</b>, or send your Telegram bot something like <b>#TAK-CAP !High Radio tool | notes</b>.</p></div>`;
   }
-
-  const cards = document.createElement('div');
-  cards.className = 'cards';
-
-  list.forEach(p=>{
-    const st = statusOf(p);
-    const pct = projPct(p);
-    const card = document.createElement('div');
-    card.className = 'card status-'+st + (p.flagship ? ' flagship' : '');
-
-    const topHTML = `
-      <div class="card-top">
-        <div>
-          <div class="ex-name">${p.name}</div>
-          <div class="tags">
-            <span class="tag">${p.cat}</span>
-            ${p.flagship ? '<span class="tag flag">Flagship</span>' : ''}
-          </div>
-        </div>
-        <div class="status-badge" data-status="${st}" data-id="${p.id}">
-          <span class="led"></span>${STATUS_META[st].label}
-        </div>
-      </div>`;
-
-    const progHTML = `
-      <div class="card-prog">
-        <div class="track"><div class="fill" style="width:${pct}%"></div></div>
-        <div class="pct">${doneCount(p)}/${p.milestones.length}</div>
-      </div>`;
-
-    let msHTML = '<div class="sets-row">';
-    p.milestones.forEach((m, i)=>{
-      const key = `${p.id}_m${i}`;
-      const doneClass = state.done[key] ? ' done' : '';
-      msHTML += `<div class="plate${doneClass}" data-key="${key}"><span class="ms">${m}</span></div>`;
-    });
-    msHTML += '</div>';
-
-    const bottomHTML = `
-      <div class="card-bottom">
-        <div class="note">${p.note ? p.note : ''}</div>
-        ${p.repo ? `<span class="repo-chip">▸ ${p.repo}</span>` : ''}
-      </div>`;
-
-    card.innerHTML = topHTML + progHTML + msHTML + bottomHTML;
-    cards.appendChild(card);
-  });
-
-  content.appendChild(cards);
-
-  // milestone toggle
-  content.querySelectorAll('.plate').forEach(pl=>{
-    pl.addEventListener('click', ()=>{
-      const key = pl.getAttribute('data-key');
-      const val = !state.done[key];
-      if(val) state.done[key] = true; else delete state.done[key];
-      saveState();
-      renderAll();
-      sendOp({op:'setDone', key, value: val});
-    });
-  });
-
-  // status cycle
-  content.querySelectorAll('.status-badge').forEach(b=>{
-    b.addEventListener('click', ()=>{
-      const id = b.getAttribute('data-id');
-      const cur = state.statusOverride[id] || SEED.find(p=>p.id===id).status;
-      const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(cur)+1) % STATUS_CYCLE.length];
-      state.statusOverride[id] = next;
-      saveState();
-      renderAll();
-      sendOp({op:'setStatus', id, status: next});
-    });
-  });
+  root.innerHTML = html;
 }
 
-function renderAll(){
-  renderRail();
-  renderStats();
-  renderProgress();
-  renderBoard();
+// ---------------- modal ----------------
+const overlay = ()=>document.getElementById('modalOverlay');
+function openModal(id, parentId){
+  const p = id? projById(id): null;
+  const parentPreset = parentId? projById(parentId): null;
+  const cur = p || {name:'',description:'',category:(parentPreset?parentPreset.category:(ui.filterCat!=='all'?ui.filterCat:catNames()[0])),status:'Planning',priority:'Medium',due_date:'',parent_id:parentId||null};
+  const parents = data.projects.filter(x=> !p || (x.id!==p.id && !isDescendant(x.id,p.id)));
+  overlay().querySelector('.modal').innerHTML = `
+    <div class="modal-head"><h3>${p?'Edit project':(parentPreset?'New sub-project':'New project')}</h3><button class="icon-btn" data-mclose>×</button></div>
+    <label>Name<input id="m_name" value="${esc(cur.name)}"></label>
+    <label>Description<textarea id="m_desc" rows="3">${esc(cur.description||'')}</textarea></label>
+    <div class="m-row">
+      <label>Category<select id="m_cat">${catNames().map(c=>`<option${cur.category===c?' selected':''}>${esc(c)}</option>`).join('')}</select></label>
+      <label>Status<select id="m_status">${STATUSES.map(s=>`<option${cur.status===s?' selected':''}>${s}</option>`).join('')}</select></label>
+    </div>
+    <div class="m-row">
+      <label>Priority<select id="m_pri">${PRIORITIES.map(s=>`<option${cur.priority===s?' selected':''}>${s}</option>`).join('')}</select></label>
+      <label>Due date<input id="m_due" type="date" value="${cur.due_date||''}"></label>
+    </div>
+    <label>Parent (sub-project of)<select id="m_parent"><option value="">— none (top-level) —</option>${parents.map(x=>`<option value="${x.id}"${cur.parent_id===x.id?' selected':''}>${esc(x.name)} [${esc(x.category)}]</option>`).join('')}</select></label>
+    <div class="modal-actions">
+      ${p?`<button class="btn-danger" data-mdelete>Delete</button>`:'<span></span>'}
+      <div><button class="btn-ghost" data-mclose>Cancel</button><button class="btn-add" data-msave>${p?'Save':'Create'}</button></div>
+    </div>`;
+  overlay().classList.add('show');
+  overlay().dataset.editId = p? p.id : '';
+  document.getElementById('m_name').focus();
+}
+function closeModal(){ overlay().classList.remove('show'); }
+function saveModal(){
+  const id = overlay().dataset.editId;
+  const fields = {
+    name: document.getElementById('m_name').value.trim() || 'Untitled',
+    description: document.getElementById('m_desc').value.trim(),
+    category: document.getElementById('m_cat').value,
+    status: document.getElementById('m_status').value,
+    priority: document.getElementById('m_pri').value,
+    due_date: document.getElementById('m_due').value || null,
+    parent_id: document.getElementById('m_parent').value || null,
+  };
+  if(id){ sendOp({op:'updateProject', id, patch:fields}); }
+  else { sendOp({op:'addProject', ...fields}); if(fields.parent_id) ui.open[fields.parent_id]=true, saveUI(); }
+  closeModal();
 }
 
-async function init(){
-  loadState();            // instant paint from local cache (works offline)
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('app').style.display = '';  // let CSS decide (grid on desktop, block on mobile)
-  renderAll();
-
-  document.getElementById('resetBtn').addEventListener('click', ()=>{
-    if(confirm('Clear all milestone progress and status changes? This cannot be undone.')){
-      state = { done:{}, statusOverride:{}, filter: state.filter };
-      saveState();
-      renderAll();
-      sendOp({op:'reset'});
-    }
-  });
-
-  // Swipe left/right to move between status filters
-  const surface = document.getElementById('boardContent');
-  let sx=null, sy=null;
-  surface.addEventListener('touchstart', e=>{ sx=e.touches[0].clientX; sy=e.touches[0].clientY; }, {passive:true});
-  surface.addEventListener('touchend', e=>{
-    if(sx===null) return;
-    const dx=e.changedTouches[0].clientX-sx, dy=e.changedTouches[0].clientY-sy;
-    sx=null;
-    if(Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)*1.5){
-      const idx = FILTERS.findIndex(f=>f.key===state.filter);
-      if(dx<0 && idx<FILTERS.length-1){ state.filter=FILTERS[idx+1].key; }
-      else if(dx>0 && idx>0){ state.filter=FILTERS[idx-1].key; }
-      else return;
-      saveState();
-      renderAll();
-    }
-  }, {passive:true});
-
-  connectSync();   // adopt shared state + open live updates (no-op without the backend)
+// ---------------- events ----------------
+function onBoardClick(e){
+  if(e.target.closest('input,textarea,select')) return;
+  const el=e.target.closest('[data-act]'); if(!el) return;
+  const a=el.dataset.act, id=el.dataset.id;
+  if(a==='open'){ ui.open[id]=true; saveUI(); render(); }
+  else if(a==='collapse'){ delete ui.open[id]; saveUI(); render(); }
+  else if(a==='cycle-status'){ const p=projById(id); if(p){ const n=STATUS_CYCLE[(STATUS_CYCLE.indexOf(p.status)+1)%STATUS_CYCLE.length]; localProj(id,{status:n}); sendOp({op:'updateProject',id,patch:{status:n}}); } }
+  else if(a==='cycle-task'){ const t=data.tasks.find(x=>x.id===id); if(t){ const n=TASK_CYCLE[(TASK_CYCLE.indexOf(t.state||'todo')+1)%TASK_CYCLE.length]; localTask(id,{state:n}); sendOp({op:'updateTask',id,patch:{state:n}}); } }
+  else if(a==='del-task'){ sendOp({op:'deleteTask',id}); }
+  else if(a==='edit'){ openModal(id); }
+  else if(a==='del-project'){ const p=projById(id); if(confirm('Delete "'+(p?p.name:'')+'" and its sub-projects & tasks?')) sendOp({op:'deleteProject',id}); }
+  else if(a==='add-sub'){ openModal(null, id); }
+}
+function onBoardKey(e){
+  if(e.key!=='Enter') return;
+  const el=e.target.closest('[data-key="add-task"]'); if(!el) return;
+  const v=el.value.trim(); if(!v) return;
+  sendOp({op:'addTask', project_id:el.dataset.id, name:v}); el.value='';
+}
+function onBoardChange(e){
+  const el=e.target.closest('[data-chg="task-due"]'); if(!el) return;
+  sendOp({op:'updateTask', id:el.dataset.id, patch:{due_date:el.value||null}});
+}
+function onToolbar(e){
+  const v=e.target.closest('[data-view]'); if(v){ ui.view=v.dataset.view; saveUI(); render(); return; }
+  if(e.target.closest('#addProjectBtn')) openModal(null);
+}
+function onRail(e){ const t=e.target.closest('[data-cat]'); if(!t) return; ui.filterCat=t.dataset.cat; saveUI(); render(); }
+function onModal(e){
+  if(e.target===overlay() || e.target.closest('[data-mclose]')){ closeModal(); return; }
+  if(e.target.closest('[data-msave]')){ saveModal(); return; }
+  if(e.target.closest('[data-mdelete]')){ const id=overlay().dataset.editId; closeModal(); if(id){ const p=projById(id); if(confirm('Delete "'+(p?p.name:'')+'" and its sub-projects & tasks?')) sendOp({op:'deleteProject',id}); } }
 }
 
+function init(){
+  loadUI();
+  try{ const c=JSON.parse(localStorage.getItem(CACHE_KEY)||'null'); if(c&&c.categories) data=c; }catch(e){}
+  document.getElementById('loading').style.display='none';
+  document.getElementById('app').style.display='';
+  render();
+  const bc=document.getElementById('boardContent');
+  bc.addEventListener('click', onBoardClick);
+  bc.addEventListener('keydown', onBoardKey);
+  bc.addEventListener('change', onBoardChange);
+  document.getElementById('toolbar').addEventListener('click', onToolbar);
+  document.getElementById('rail').addEventListener('click', onRail);
+  document.getElementById('addCatBtn').addEventListener('click', ()=>{ const n=prompt('New category name:'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim()}); });
+  overlay().addEventListener('click', onModal);
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+  connect();
+}
 init();
 </script>
 </body>
