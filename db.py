@@ -22,8 +22,9 @@ DB_PATH = os.environ.get("TRACKER_DB") or os.path.join(
     os.environ.get("STATE_DIRECTORY") or os.environ.get("STATE_DIR") or ".", "tracker.db"
 )
 
-DEFAULT_CATEGORIES = ["AI_Agents", "Plugins", "Apps", "Feature_Requests",
-                      "TAK-CAP", "TAK-Public", "Infra-TAK", "Other"]
+# Clean slate: no categories are seeded. You create your own (and sub-categories)
+# from the web UI or by using #Category in Telegram (auto-created on first use).
+DEFAULT_CATEGORIES = []
 
 PROJECT_STATUSES = ["Planning", "Active", "Blocked", "Review", "Complete", "Backlog"]
 PRIORITIES = ["Critical", "High", "Medium", "Low"]
@@ -35,6 +36,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS categories (
     name TEXT PRIMARY KEY,
+    parent TEXT,
     sort INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS projects (
@@ -86,6 +88,10 @@ def init():
         cols = [r["name"] for r in c.execute("PRAGMA table_info(projects)")]
         if "tags" not in cols:
             c.execute("ALTER TABLE projects ADD COLUMN tags TEXT DEFAULT '[]'")
+        # migration: sub-categories (parent column on categories)
+        ccols = [r["name"] for r in c.execute("PRAGMA table_info(categories)")]
+        if "parent" not in ccols:
+            c.execute("ALTER TABLE categories ADD COLUMN parent TEXT")
         if c.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
             c.executemany("INSERT INTO categories(name,sort) VALUES(?,?)",
                           [(n, i) for i, n in enumerate(DEFAULT_CATEGORIES)])
@@ -119,7 +125,8 @@ def meta_set(k, v):
 # ── ids ───────────────────────────────────────────────────────────────────
 
 def _cat_prefix(cat):
-    p = "".join(w[0] for w in cat.replace("-", "_").split("_"))[:3].upper()
+    words = [w for w in (cat or "").replace("-", "_").split("_") if w]
+    p = "".join(w[0] for w in words)[:3].upper()
     return p or "P"
 
 
@@ -180,10 +187,14 @@ def summary():
 
 # ── writes (each bumps rev) ───────────────────────────────────────────────
 
-def add_category(name):
+def add_category(name, parent=None):
+    name = (name or "").strip()
+    if not name:
+        return
+    parent = (parent or "").strip() or None
     with _lock, _conn() as c:
         mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM categories").fetchone()[0]
-        c.execute("INSERT OR IGNORE INTO categories(name,sort) VALUES(?,?)", (name, mx + 1))
+        c.execute("INSERT OR IGNORE INTO categories(name,parent,sort) VALUES(?,?,?)", (name, parent, mx + 1))
         _bump(c)
 
 
@@ -198,34 +209,45 @@ def rename_category(old, new):
         else:
             c.execute("UPDATE categories SET name=? WHERE name=?", (new, old))
         c.execute("UPDATE projects SET category=? WHERE category=?", (new, old))
+        c.execute("UPDATE categories SET parent=? WHERE parent=?", (new, old))  # keep sub-categories attached
         _bump(c)
 
 
 def delete_category(name):
-    """Delete a category; its projects are reassigned (default -> 'Other'). Won't remove the last one."""
+    """Delete a category and all its sub-categories; their projects move up to the
+    deleted category's parent (or become uncategorized if it was top-level).
+    A clean slate (zero categories) is allowed."""
     with _lock, _conn() as c:
-        cats = [r["name"] for r in c.execute("SELECT name FROM categories ORDER BY sort, name")]
-        if name not in cats or len(cats) <= 1:
+        row = c.execute("SELECT parent FROM categories WHERE name=?", (name,)).fetchone()
+        if not row:
             return None
-        target = "Other" if ("Other" in cats and name != "Other") else next(x for x in cats if x != name)
-        c.execute("UPDATE projects SET category=? WHERE category=?", (target, name))
-        c.execute("DELETE FROM categories WHERE name=?", (name,))
+        target = row["parent"] or ""            # "" = uncategorized
+        subtree, stack = [name], [name]
+        while stack:
+            cur = stack.pop()
+            for r in c.execute("SELECT name FROM categories WHERE parent=?", (cur,)):
+                subtree.append(r["name"]); stack.append(r["name"])
+        qm = ",".join("?" * len(subtree))
+        c.execute(f"UPDATE projects SET category=? WHERE category IN ({qm})", (target, *subtree))
+        c.execute(f"DELETE FROM categories WHERE name IN ({qm})", subtree)
         _bump(c)
     return target
 
 
 def add_project(category, name, description="", status="Planning", priority="Medium",
                 due_date=None, parent_id=None, tags=None):
-    category = category if category in _category_names() else "Other"
-    pid = next_project_id(category)
+    cat = (category or "").strip()               # "" = uncategorized
+    if cat and cat not in _category_names():
+        add_category(cat)                        # auto-create unknown category (e.g. from Telegram)
+    pid = next_project_id(cat)
     now = _now()
     tags_json = json.dumps(tags or [])
     with _lock, _conn() as c:
-        mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM projects WHERE category=?", (category,)).fetchone()[0]
+        mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM projects WHERE category=?", (cat,)).fetchone()[0]
         c.execute(
             "INSERT INTO projects(id,category,parent_id,name,description,status,priority,due_date,tags,sort,created_at,updated_at)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (pid, category, parent_id, name, description, status, priority, due_date, tags_json, mx + 1, now, now))
+            (pid, cat, parent_id, name, description, status, priority, due_date, tags_json, mx + 1, now, now))
         _bump(c)
     return pid
 

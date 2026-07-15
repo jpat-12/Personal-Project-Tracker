@@ -67,7 +67,7 @@ def apply_op(op):
     if kind == "addProject":
         if not (op.get("name") or "").strip():
             return False
-        db.add_project(op.get("category", "Other"), op["name"].strip(),
+        db.add_project(op.get("category") or "", op["name"].strip(),
                        description=op.get("description", ""), status=op.get("status", "Planning"),
                        priority=op.get("priority", "Medium"), due_date=op.get("due_date") or None,
                        parent_id=op.get("parent_id") or None, tags=op.get("tags") or [])
@@ -95,7 +95,7 @@ def apply_op(op):
     elif kind == "addCategory":
         if not (op.get("name") or "").strip():
             return False
-        db.add_category(op["name"].strip())
+        db.add_category(op["name"].strip(), op.get("parent") or None)
     elif kind == "renameCategory":
         if not (op.get("old") and (op.get("new") or "").strip()):
             return False
@@ -224,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
 # ── Telegram poller (task tracking only; no Claude execution) ──────────────
 
 TG_API = f"https://api.telegram.org/bot{TG_TOKEN}" if TG_TOKEN else None
-DEFAULT_CATEGORY = "Other"
+DEFAULT_CATEGORY = ""          # "" = uncategorized (clean slate has no categories)
 DEFAULT_PRIORITY = "Medium"
 VALID_PRIORITIES = {"critical", "high", "medium", "low"}
 
@@ -256,10 +256,10 @@ def parse_task_message(text):
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if tok.startswith("#"):
+        if tok.startswith("#") and len(tok) > 1:
             key = tok[1:].lower().replace("-", " ").replace("_", " ")
-            if key in aliases:
-                category = aliases[key]; i += 1; continue
+            category = aliases.get(key, tok[1:])   # known -> canonical; unknown -> new category (auto-created)
+            i += 1; continue
         if tok.startswith("!"):
             key = tok[1:].lower()
             if key in VALID_PRIORITIES:
@@ -348,7 +348,7 @@ def tg_handle(text):
         tg_reply("Couldn't parse that. Send /help for the format."); return False
     category, priority, title, desc = parsed
     pid = db.add_project(category, title, description=desc, priority=priority)
-    tg_reply(f'✅ Added {pid} to {category}: "{title}" ({priority}).')
+    tg_reply(f'✅ Added {pid} to {category or "Uncategorized"}: "{title}" ({priority}).')
     log(f"telegram added project {pid} [{category}] {title}")
     return True
 

@@ -69,6 +69,9 @@
   .tag-x:hover{opacity:1;color:var(--ember);}
   .tag-add-input{background:var(--surface-2);border:1px dashed var(--line);color:var(--ink);border-radius:3px;font-family:'JetBrains Mono';font-size:10px;padding:2px 6px;width:64px;}
   .tag-add-input:focus{outline:none;border-color:var(--accent);}
+  .rail .tab{padding-left:calc(12px + var(--rd,0) * 13px);}
+  .catgroup{margin-left:calc(var(--cd,0) * 16px);}
+  .catgroup .group-head{padding-top:12px;}
 
   .cards{padding:6px 20px;display:flex;flex-direction:column;gap:12px;}
   .list{padding:6px 20px;display:flex;flex-direction:column;gap:6px;}
@@ -263,7 +266,15 @@ function dueBadge(s, complete){ const i=dueInfo(s,complete); return i?`<span cla
 
 // ---------------- tree helpers ----------------
 function catNames(){ return data.categories.map(c=>c.name); }
+function catByName(n){ return data.categories.find(c=>c.name===n); }
+function topCats(){ return data.categories.filter(c=>!c.parent); }
+function subCats(n){ return data.categories.filter(c=>c.parent===n); }
+function catDescendants(n){ const out=[n], st=[n]; while(st.length){ const c=st.pop(); subCats(c).forEach(s=>{out.push(s.name); st.push(s.name);}); } return out; }
+function isUncat(p){ return !p.category || !catByName(p.category); }
 function topProjects(cat){ return data.projects.filter(p=>!p.parent_id && p.category===cat); }
+function uncatTop(){ return data.projects.filter(p=>!p.parent_id && isUncat(p)); }
+function subtreeCount(n){ const set=new Set(catDescendants(n)); return data.projects.filter(p=>!p.parent_id && set.has(p.category)).length; }
+function inFilter(p){ if(ui.filterCat==='all') return true; if(ui.filterCat==='__uncat__') return isUncat(p); return catDescendants(ui.filterCat).includes(p.category); }
 function childrenOf(pid){ return data.projects.filter(p=>p.parent_id===pid); }
 function tasksOf(pid){ return data.tasks.filter(t=>t.project_id===pid); }
 function projById(id){ return data.projects.find(p=>p.id===id); }
@@ -304,9 +315,11 @@ function render(){ renderRail(); renderStats(); renderProgress(); renderToolbar(
 
 function renderRail(){
   const rail=document.getElementById('rail');
-  const tabs=[{key:'all',label:'All',n:data.projects.filter(p=>!p.parent_id).length}]
-    .concat(catNames().map(c=>({key:c,label:c,n:topProjects(c).length})));
-  rail.innerHTML = tabs.map(t=>`<div class="tab${ui.filterCat===t.key?' active':''}" data-cat="${esc(t.key)}"><span class="n">${esc(t.label)}</span><span class="c">${t.n}</span></div>`).join('');
+  const tabs=[{key:'all',label:'All',depth:0,n:data.projects.filter(p=>!p.parent_id).length}];
+  const walk=(cat,depth)=>{ tabs.push({key:cat.name,label:cat.name,depth,n:subtreeCount(cat.name)}); subCats(cat.name).forEach(s=>walk(s,depth+1)); };
+  topCats().forEach(c=>walk(c,0));
+  if(uncatTop().length) tabs.push({key:'__uncat__',label:'Uncategorized',depth:0,n:uncatTop().length});
+  rail.innerHTML = tabs.map(t=>`<div class="tab${ui.filterCat===t.key?' active':''}" data-cat="${esc(t.key)}" style="--rd:${t.depth||0}"><span class="n">${t.depth?'└ ':''}${esc(t.label)}</span><span class="c">${t.n}</span></div>`).join('');
 }
 function renderStats(){
   const c=statusCounts();
@@ -429,7 +442,24 @@ function projectNode(p, depth){
   return ui.view==='list' ? rowHTML(p, depth) : cardHTML(p);
 }
 
-function topFiltered(){ return data.projects.filter(p=>!p.parent_id && (ui.filterCat==='all'||p.category===ui.filterCat)); }
+function topFiltered(){ return data.projects.filter(p=>!p.parent_id && inFilter(p)); }
+
+function catNodeHTML(cat, depth){
+  const wrap = ()=> ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
+  const tops = topProjects(cat.name);
+  const subs = subCats(cat.name);
+  let html = `<section class="group catgroup" style="--cd:${depth}"><div class="group-head">`
+    + `<span class="gh-label">${depth?'↳ ':''}${esc(cat.name)}</span><span class="gh-count">${tops.length}</span>`
+    + `<span class="gh-actions">`
+    + `<button class="icon-btn sm" data-act="add-subcat" data-cat="${esc(cat.name)}" title="Add sub-category">＋</button>`
+    + `<button class="icon-btn sm" data-act="rename-cat" data-cat="${esc(cat.name)}" title="Rename category">✎</button>`
+    + `<button class="icon-btn sm danger" data-act="del-cat" data-cat="${esc(cat.name)}" title="Delete category">🗑</button>`
+    + `</span></div>`;
+  if(tops.length){ html += wrap(); tops.forEach(p=>{ html += projectNode(p,0); }); html += `</div>`; }
+  html += `</section>`;
+  subs.forEach(s=>{ html += catNodeHTML(s, depth+1); });
+  return html;
+}
 
 function renderBoard(){
   const root=document.getElementById('boardContent');
@@ -448,38 +478,54 @@ function renderBoard(){
       items.forEach(p=>{ html += projectNode(p,0); });
       html += `</div></section>`;
     });
+    if(any===false && !tops.length){ /* fall through to empty */ }
+    any = any || tops.length>0;
   } else {
-    const cats = ui.filterCat==='all' ? catNames() : [ui.filterCat];
-    cats.forEach(cat=>{
-      const tops=topProjects(cat);
-      if(!tops.length) return;
-      any=true;
-      html += `<section class="group"><div class="group-head"><span class="gh-label">${esc(cat)}</span><span class="gh-count">${tops.length}</span>`
-        + `<span class="gh-actions"><button class="icon-btn sm" data-act="rename-cat" data-cat="${esc(cat)}" title="Rename category">✎</button>`
-        + `<button class="icon-btn sm danger" data-act="del-cat" data-cat="${esc(cat)}" title="Delete category">🗑</button></span></div>${wrap()}`;
-      tops.forEach(p=>{ html += projectNode(p, 0); });
-      html += `</div></section>`;
-    });
+    // category tree
+    let roots;
+    if(ui.filterCat==='all') roots = topCats();
+    else if(ui.filterCat==='__uncat__') roots = [];
+    else { const c=catByName(ui.filterCat); roots = c?[c]:[]; }
+    roots.forEach(c=>{ html += catNodeHTML(c, 0); any=true; });
+    // uncategorized projects
+    if(ui.filterCat==='all' || ui.filterCat==='__uncat__'){
+      const un=uncatTop();
+      if(un.length){ any=true;
+        html += `<section class="group"><div class="group-head"><span class="gh-label">Uncategorized</span><span class="gh-count">${un.length}</span></div>${wrap()}`;
+        un.forEach(p=>{ html += projectNode(p,0); });
+        html += `</div></section>`;
+      }
+    }
   }
   if(!any){
-    html = `<div class="empty-panel"><div class="big">No projects</div><p>Nothing here yet. Add one with <b>+ Add project</b>, or send your Telegram bot something like <b>#TAK-CAP !High Radio tool | notes</b>.</p></div>`;
+    const hint = data.categories.length
+      ? 'Add one with <b>+ Add project</b>, or send your Telegram bot <b>#Category !High Title | notes</b>.'
+      : 'No categories yet. Create one with <b>+ Add category</b> (sidebar), add a project, or send your Telegram bot <b>#NewCategory !High Title | notes</b> — the category is created automatically.';
+    html = `<div class="empty-panel"><div class="big">Nothing here</div><p>${hint}</p></div>`;
   }
   root.innerHTML = html;
 }
 
 // ---------------- modal ----------------
 const overlay = ()=>document.getElementById('modalOverlay');
+function catOptionsHTML(selected){
+  let opts=`<option value=""${!selected?' selected':''}>— none (uncategorized) —</option>`;
+  const walk=(cat,depth)=>{ const pad='   '.repeat(depth); opts+=`<option value="${esc(cat.name)}"${selected===cat.name?' selected':''}>${pad}${esc(cat.name)}</option>`; subCats(cat.name).forEach(s=>walk(s,depth+1)); };
+  topCats().forEach(c=>walk(c,0));
+  return opts;
+}
 function openModal(id, parentId){
   const p = id? projById(id): null;
   const parentPreset = parentId? projById(parentId): null;
-  const cur = p || {name:'',description:'',category:(parentPreset?parentPreset.category:(ui.filterCat!=='all'?ui.filterCat:catNames()[0])),status:'Planning',priority:'Medium',due_date:'',parent_id:parentId||null};
+  const filterCatReal = (ui.filterCat!=='all' && ui.filterCat!=='__uncat__' && catByName(ui.filterCat)) ? ui.filterCat : '';
+  const cur = p || {name:'',description:'',category:(parentPreset?parentPreset.category:filterCatReal),status:'Planning',priority:'Medium',due_date:'',parent_id:parentId||null,tags:[]};
   const parents = data.projects.filter(x=> !p || (x.id!==p.id && !isDescendant(x.id,p.id)));
   overlay().querySelector('.modal').innerHTML = `
     <div class="modal-head"><h3>${p?'Edit project':(parentPreset?'New sub-project':'New project')}</h3><button class="icon-btn" data-mclose>×</button></div>
     <label>Name<input id="m_name" value="${esc(cur.name)}"></label>
     <label>Description<textarea id="m_desc" rows="3">${esc(cur.description||'')}</textarea></label>
     <div class="m-row">
-      <label>Category<select id="m_cat">${catNames().map(c=>`<option${cur.category===c?' selected':''}>${esc(c)}</option>`).join('')}</select></label>
+      <label>Category<select id="m_cat">${catOptionsHTML(cur.category||'')}</select></label>
       <label>Status<select id="m_status">${STATUSES.map(s=>`<option${cur.status===s?' selected':''}>${s}</option>`).join('')}</select></label>
     </div>
     <div class="m-row">
@@ -530,7 +576,8 @@ function onBoardClick(e){
   else if(a==='add-sub'){ openModal(null, id); }
   else if(a==='untag'){ const p=projById(id); if(p){ const tags=(p.tags||[]).filter(t=>t!==el.dataset.tag); localProj(id,{tags}); sendOp({op:'updateProject',id,patch:{tags}}); } }
   else if(a==='rename-cat'){ const cat=el.dataset.cat; const n=prompt('Rename category "'+cat+'" to:', cat); if(n&&n.trim()&&n.trim()!==cat) sendOp({op:'renameCategory', old:cat, new:n.trim()}); }
-  else if(a==='del-cat'){ const cat=el.dataset.cat; if(confirm('Delete category "'+cat+'"? Its projects move to Other.')){ if(ui.filterCat===cat) ui.filterCat='all'; sendOp({op:'deleteCategory', name:cat}); } }
+  else if(a==='add-subcat'){ const parent=el.dataset.cat; const n=prompt('New sub-category of "'+parent+'":'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim(), parent}); }
+  else if(a==='del-cat'){ const cat=el.dataset.cat; if(confirm('Delete category "'+cat+'" and its sub-categories? Their projects move up to the parent (or become uncategorized).')){ if(ui.filterCat===cat||catDescendants(cat).includes(ui.filterCat)) ui.filterCat='all'; sendOp({op:'deleteCategory', name:cat}); } }
 }
 
 function startRenameTask(labelEl, id){
