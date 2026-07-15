@@ -60,6 +60,9 @@
   .gh-label{font-family:'Oswald';font-size:15px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-dim);}
   .gh-count{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-faint);background:var(--surface-2);padding:1px 7px;border-radius:8px;}
   .gh-actions{margin-left:auto;display:flex;gap:5px;}
+  .gh-chev{cursor:pointer;color:var(--ink-faint);font-size:10px;width:16px;flex:0 0 auto;text-align:center;user-select:none;}
+  .gh-chev:hover{color:var(--ink);}
+  .catgroup.collapsed .group-head{opacity:.75;}
   .icon-btn.sm{min-height:30px;min-width:30px;font-size:12px;padding:0 6px;}
   .icon-btn.sm.wide{width:auto;padding:0 9px;font-family:'JetBrains Mono';font-size:10.5px;}
   .task,.card,.row,.group-head{cursor:grab;}
@@ -244,14 +247,14 @@ const TASK_CYCLE = ["todo","doing","done"];
 
 // ---------------- state ----------------
 let data = { categories:[], projects:[], tasks:[], rev:0 };
-let ui = { view:'gallery', filterCat:'all', groupBy:'category', open:{} };
+let ui = { view:'gallery', filterCat:'all', groupBy:'category', open:{}, collapsedCats:{} };
 const MY_ID = 'u'+Math.random().toString(36).slice(2,9);
 const UI_KEY = 'ppt-ui-v3';
 const CACHE_KEY = 'ppt-cache-v3';
 let SYNC = false, es = null;
 
 function saveUI(){ try{ localStorage.setItem(UI_KEY, JSON.stringify(ui)); }catch(e){} }
-function loadUI(){ try{ const u=JSON.parse(localStorage.getItem(UI_KEY)||'null'); if(u) ui=Object.assign(ui,u); }catch(e){} ui.open=ui.open||{}; }
+function loadUI(){ try{ const u=JSON.parse(localStorage.getItem(UI_KEY)||'null'); if(u) ui=Object.assign(ui,u); }catch(e){} ui.open=ui.open||{}; ui.collapsedCats=ui.collapsedCats||{}; }
 function cache(){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify(data)); }catch(e){} }
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -452,17 +455,22 @@ function catNodeHTML(cat, depth){
   const wrap = ()=> ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
   const tops = topProjects(cat.name);
   const subs = subCats(cat.name);
-  let html = `<section class="group catgroup" style="--cd:${depth}"><div class="group-head" draggable="true" data-drag="category" data-cat="${esc(cat.name)}">`
-    + `<span class="gh-label">${depth?'↳ ':''}${esc(cat.name)}</span><span class="gh-count">${tops.length}</span>`
+  const collapsed = !!ui.collapsedCats[cat.name];
+  const total = subtreeCount(cat.name);
+  let html = `<section class="group catgroup${collapsed?' collapsed':''}" style="--cd:${depth}"><div class="group-head" draggable="true" data-drag="category" data-cat="${esc(cat.name)}">`
+    + `<span class="gh-chev" draggable="false" data-act="toggle-cat" data-cat="${esc(cat.name)}" title="${collapsed?'Expand':'Collapse'}">${collapsed?'▶':'▼'}</span>`
+    + `<span class="gh-label">${depth?'↳ ':''}${esc(cat.name)}</span><span class="gh-count">${collapsed && total!==tops.length ? total+' total' : tops.length}</span>`
     + `<span class="gh-actions">`
     + `<button class="icon-btn sm wide" draggable="false" data-act="add-proj-to-cat" data-cat="${esc(cat.name)}" title="Add project to this category">+ Project</button>`
     + `<button class="icon-btn sm" draggable="false" data-act="add-subcat" data-cat="${esc(cat.name)}" title="Add sub-category">＋</button>`
     + `<button class="icon-btn sm" draggable="false" data-act="rename-cat" data-cat="${esc(cat.name)}" title="Rename category">✎</button>`
     + `<button class="icon-btn sm danger" draggable="false" data-act="del-cat" data-cat="${esc(cat.name)}" title="Delete category">🗑</button>`
     + `</span></div>`;
-  if(tops.length){ html += wrap(); tops.forEach(p=>{ html += projectNode(p,0); }); html += `</div>`; }
+  if(!collapsed){
+    if(tops.length){ html += wrap(); tops.forEach(p=>{ html += projectNode(p,0); }); html += `</div>`; }
+    subs.forEach(s=>{ html += catNodeHTML(s, depth+1); });
+  }
   html += `</section>`;
-  subs.forEach(s=>{ html += catNodeHTML(s, depth+1); });
   return html;
 }
 
@@ -725,6 +733,7 @@ function onBoardClick(e){
   else if(a==='del-project'){ const p=projById(id); if(confirm('Delete "'+(p?p.name:'')+'" and its sub-projects & tasks?')) sendOp({op:'deleteProject',id}); }
   else if(a==='add-sub'){ openModal(null, id); }
   else if(a==='add-proj-to-cat'){ openModal(null, null, el.dataset.cat); }
+  else if(a==='toggle-cat'){ const cat=el.dataset.cat; if(ui.collapsedCats[cat]) delete ui.collapsedCats[cat]; else ui.collapsedCats[cat]=true; saveUI(); render(); }
   else if(a==='untag'){ const p=projById(id); if(p){ const tags=(p.tags||[]).filter(t=>t!==el.dataset.tag); localProj(id,{tags}); sendOp({op:'updateProject',id,patch:{tags}}); } }
   else if(a==='rename-cat'){ const cat=el.dataset.cat; const n=prompt('Rename category "'+cat+'" to:', cat); if(n&&n.trim()&&n.trim()!==cat) sendOp({op:'renameCategory', old:cat, new:n.trim()}); }
   else if(a==='add-subcat'){ const parent=el.dataset.cat; const n=prompt('New sub-category of "'+parent+'":'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim(), parent}); }
