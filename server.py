@@ -732,7 +732,9 @@ def tg_handle_claude(text, chat_id):
 
         tool_results = []
         for tu in tool_uses:
+            log(f"claude tool call: {tu['name']}({tu.get('input', {})})")
             result_text, changed = claude_run_tool(tu["name"], tu.get("input", {}))
+            log(f"  -> {result_text}")
             changed_any = changed_any or changed
             tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
         history.append({"role": "user", "content": tool_results})
@@ -758,8 +760,10 @@ def tg_handle(text):
         tg_cmd_done(text.strip()[5:].strip()); return True
 
     if ANTHROPIC_API_KEY:
+        log(f"routing to claude: {text!r}")
         return tg_handle_claude(text, TG_CHAT)
 
+    log(f"claude disabled, using rigid parser for: {text!r}")
     parsed = parse_task_message(text)
     if not parsed:
         tg_reply("Couldn't parse that. Send /help for the format."); return False
@@ -805,6 +809,11 @@ def start_telegram():
     if not (TG_TOKEN and TG_CHAT):
         log("telegram disabled (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set)")
         return
+    if ANTHROPIC_API_KEY:
+        masked = ANTHROPIC_API_KEY[:10] + "…" + ANTHROPIC_API_KEY[-4:] if len(ANTHROPIC_API_KEY) > 14 else "(short/invalid-looking)"
+        log(f"claude natural-language parsing: ENABLED (model={CLAUDE_MODEL}, key={masked})")
+    else:
+        log("claude natural-language parsing: disabled (ANTHROPIC_API_KEY not set) — using rigid #Category !Priority parser")
     t = threading.Thread(target=telegram_loop, name="telegram", daemon=True)
     t.start()
 
