@@ -104,9 +104,12 @@ def apply_op(op):
             return False
         db.delete_project(op["id"])
     elif kind == "addTask":
-        if not (op.get("project_id") and (op.get("name") or "").strip()):
+        name = (op.get("name") or "").strip()
+        project_id = op.get("project_id") or None
+        category = op.get("category") or None
+        if not name or not (project_id or category):
             return False
-        db.add_task(op["project_id"], op["name"].strip(),
+        db.add_task(name, project_id=project_id, category=category,
                     state=op.get("state", "todo"), due_date=op.get("due_date") or None)
     elif kind == "updateTask":
         if not op.get("id"):
@@ -467,7 +470,7 @@ def tg_cmd_task(rest):
     p = db.get_project(pid)
     if not p:
         tg_reply(f"No project with ID {pid}."); return
-    db.add_task(p["id"], text)
+    db.add_task(text, project_id=p["id"])
     tg_reply(f'➕ Added task to {p["id"]}: "{text}"')
 
 

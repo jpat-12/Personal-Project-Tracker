@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE TABLE IF NOT EXISTS tasks (
     id          TEXT PRIMARY KEY,
-    project_id  TEXT NOT NULL,
+    project_id  TEXT,
+    category    TEXT,
     name        TEXT NOT NULL,
     state       TEXT DEFAULT 'todo',
     due_date    TEXT,
@@ -62,9 +63,15 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+"""
+
+# Created only after migrations run (below), since an index on a column that a
+# migration is about to add would fail against a pre-existing table.
+INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_projects_cat ON projects(category);
 CREATE INDEX IF NOT EXISTS idx_projects_parent ON projects(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks(category);
 """
 
 
@@ -92,11 +99,32 @@ def init():
         ccols = [r["name"] for r in c.execute("PRAGMA table_info(categories)")]
         if "parent" not in ccols:
             c.execute("ALTER TABLE categories ADD COLUMN parent TEXT")
+        # migration: tasks can belong directly to a category (project_id becomes
+        # optional + new category column). SQLite can't drop a NOT NULL
+        # constraint via ALTER TABLE, so rebuild the table when upgrading.
+        tcols = [r["name"] for r in c.execute("PRAGMA table_info(tasks)")]
+        if "category" not in tcols:
+            c.execute("""CREATE TABLE tasks_new (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT,
+                category    TEXT,
+                name        TEXT NOT NULL,
+                state       TEXT DEFAULT 'todo',
+                due_date    TEXT,
+                sort        INTEGER DEFAULT 0,
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )""")
+            c.execute("""INSERT INTO tasks_new (id, project_id, category, name, state, due_date, sort, created_at, updated_at)
+                         SELECT id, project_id, NULL, name, state, due_date, sort, created_at, updated_at FROM tasks""")
+            c.execute("DROP TABLE tasks")
+            c.execute("ALTER TABLE tasks_new RENAME TO tasks")
         if c.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
             c.executemany("INSERT INTO categories(name,sort) VALUES(?,?)",
                           [(n, i) for i, n in enumerate(DEFAULT_CATEGORIES)])
         if c.execute("SELECT v FROM meta WHERE k='rev'").fetchone() is None:
             c.execute("INSERT INTO meta(k,v) VALUES('rev','0')")
+        c.executescript(INDEXES)  # after migrations, so indexed columns are guaranteed to exist
 
 
 # ── revision / meta ───────────────────────────────────────────────────────
@@ -354,20 +382,26 @@ def delete_project(pid):
         _bump(c)
 
 
-def add_task(project_id, name, state="todo", due_date=None):
+def add_task(name, project_id=None, category=None, state="todo", due_date=None):
+    """A task belongs to EITHER a project (project_id) OR sits directly on a
+    category (category, project_id left null) — mutually exclusive."""
     tid = _task_id()
     now = _now()
+    cat = None if project_id else (category or None)
     with _lock, _conn() as c:
-        mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM tasks WHERE project_id=?", (project_id,)).fetchone()[0]
-        c.execute("INSERT INTO tasks(id,project_id,name,state,due_date,sort,created_at,updated_at)"
-                  " VALUES(?,?,?,?,?,?,?,?)",
-                  (tid, project_id, name, state, due_date, mx + 1, now, now))
+        if project_id:
+            mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM tasks WHERE project_id=?", (project_id,)).fetchone()[0]
+        else:
+            mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM tasks WHERE category=? AND project_id IS NULL", (cat,)).fetchone()[0]
+        c.execute("INSERT INTO tasks(id,project_id,category,name,state,due_date,sort,created_at,updated_at)"
+                  " VALUES(?,?,?,?,?,?,?,?,?)",
+                  (tid, project_id, cat, name, state, due_date, mx + 1, now, now))
         _bump(c)
     return tid
 
 
 def update_task(tid, patch):
-    fields = {k: v for k, v in patch.items() if k in ("name", "state", "due_date", "project_id", "sort")}
+    fields = {k: v for k, v in patch.items() if k in ("name", "state", "due_date", "project_id", "category", "sort")}
     if not fields:
         return
     fields["updated_at"] = _now()

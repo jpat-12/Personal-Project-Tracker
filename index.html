@@ -63,6 +63,9 @@
   .gh-chev{cursor:pointer;color:var(--ink-faint);font-size:10px;width:16px;flex:0 0 auto;text-align:center;user-select:none;}
   .gh-chev:hover{color:var(--ink);}
   .catgroup.collapsed .group-head{opacity:.75;}
+  .cat-tasks{padding:8px 20px 0;}
+  .cat-tasks .buckets{display:flex;flex-direction:column;gap:10px;margin-top:0;}
+  .cat-tasks .add-row{margin-top:8px;max-width:420px;}
   .icon-btn.sm{min-height:30px;min-width:30px;font-size:12px;padding:0 6px;}
   .icon-btn.sm.wide{width:auto;padding:0 9px;font-family:'JetBrains Mono';font-size:10.5px;}
   .task,.card,.row,.group-head{cursor:grab;}
@@ -393,6 +396,7 @@ function renderStats(){
 }
 function renderProgress(){
   let total=0,done=0; data.projects.forEach(p=>{const c=taskCounts(p); total+=c.total; done+=c.done;});
+  data.tasks.forEach(t=>{ if(!t.project_id){ total++; if(t.state==='done') done++; } });
   const pct=total?Math.round(done/total*100):0;
   document.getElementById('progLabel').textContent=`PORTFOLIO — ${done}/${total} TASKS`;
   document.getElementById('progPct').textContent=pct+'%';
@@ -452,9 +456,13 @@ function rowHTML(p, depth){
     ${statusBadge(p,false)}
   </div>`;
 }
+function tasksOfOwner(owner){
+  if(owner.project_id) return data.tasks.filter(t=>t.project_id===owner.project_id);
+  return data.tasks.filter(t=> !t.project_id && (t.category||'')===(owner.category||''));
+}
 function taskHTML(t){
   const st=t.state||'todo';
-  return `<div class="task task-${st}" draggable="true" data-drag="task" data-id="${t.id}" data-project="${esc(t.project_id)}" data-state="${st}">
+  return `<div class="task task-${st}" draggable="true" data-drag="task" data-id="${t.id}" data-project="${esc(t.project_id||'')}" data-cat="${esc(t.category||'')}" data-state="${st}">
     <span class="task-toggle" data-act="cycle-task" data-id="${t.id}" title="To Do → Working → Completed"><span class="tk-dot"></span></span>
     <span class="task-label" data-act="rename-task" data-id="${t.id}" title="Click to rename">${esc(t.name)}</span>
     <input class="task-due-input" type="date" value="${t.due_date||''}" data-chg="task-due" data-id="${t.id}" title="Due date" draggable="false">
@@ -462,8 +470,10 @@ function taskHTML(t){
     <button class="task-del" draggable="false" data-act="del-task" data-id="${t.id}" title="Delete task">×</button>
   </div>`;
 }
-function bucketHTML(title, tasks, cls, projectId, stateKey){
-  return `<div class="bucket ${cls}" data-drop="bucket" data-project="${esc(projectId)}" data-state="${stateKey}"><h4>${title} <span class="bk-count">${tasks.length}</span></h4>${tasks.length?tasks.map(taskHTML).join(''):'<div class="bucket-empty">— drop here —</div>'}</div>`;
+function bucketHTML(title, tasks, cls, owner, stateKey){
+  const pid = owner.project_id || '';
+  const cat = owner.project_id ? '' : (owner.category || '');
+  return `<div class="bucket ${cls}" data-drop="bucket" data-project="${esc(pid)}" data-cat="${esc(cat)}" data-state="${stateKey}"><h4>${title} <span class="bk-count">${tasks.length}</span></h4>${tasks.length?tasks.map(taskHTML).join(''):'<div class="bucket-empty">— drop here —</div>'}</div>`;
 }
 function detailHTML(p, depth){
   const ts=tasksOf(p.id);
@@ -490,9 +500,9 @@ function detailHTML(p, depth){
     ${p.description?`<p class="detail-desc">${esc(p.description)}</p>`:'<p class="detail-desc muted">No description — use ✎ to add one.</p>'}
     ${progBar(p)}
     <div class="buckets">
-      ${bucketHTML('Currently Working', doing, 'bk-doing', p.id, 'doing')}
-      ${bucketHTML('To Do', todo, 'bk-todo', p.id, 'todo')}
-      ${bucketHTML('Completed', done, 'bk-done', p.id, 'done')}
+      ${bucketHTML('Currently Working', doing, 'bk-doing', {project_id:p.id}, 'doing')}
+      ${bucketHTML('To Do', todo, 'bk-todo', {project_id:p.id}, 'todo')}
+      ${bucketHTML('Completed', done, 'bk-done', {project_id:p.id}, 'done')}
     </div>
     <div class="add-row"><input class="add-input" placeholder="+ add task, press Enter" data-key="add-task" data-id="${p.id}" draggable="false"></div>
     <div class="subs">
@@ -508,6 +518,20 @@ function projectNode(p, depth){
 }
 
 function topFiltered(){ return data.projects.filter(p=>!p.parent_id && inFilter(p)); }
+
+function catTasksHTML(catName){
+  const owner = {category:catName};
+  const ts = tasksOfOwner(owner);
+  const doing=ts.filter(t=>t.state==='doing'), todo=ts.filter(t=>(t.state||'todo')==='todo'), done=ts.filter(t=>t.state==='done');
+  return `<div class="cat-tasks">
+    ${ts.length ? `<div class="buckets">
+      ${bucketHTML('Currently Working', doing, 'bk-doing', owner, 'doing')}
+      ${bucketHTML('To Do', todo, 'bk-todo', owner, 'todo')}
+      ${bucketHTML('Completed', done, 'bk-done', owner, 'done')}
+    </div>` : ''}
+    <div class="add-row"><input class="add-input" placeholder="+ add task to this category, press Enter" data-key="add-cat-task" data-cat="${esc(catName)}" draggable="false"></div>
+  </div>`;
+}
 
 function catNodeHTML(cat, depth){
   const wrap = ()=> ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
@@ -525,6 +549,7 @@ function catNodeHTML(cat, depth){
     + `<button class="icon-btn sm danger" draggable="false" data-act="del-cat" data-cat="${esc(cat.name)}" title="Delete category">🗑</button>`
     + `</span></div>`;
   if(!collapsed){
+    html += catTasksHTML(cat.name);
     if(tops.length){ html += wrap(); tops.forEach(p=>{ html += projectNode(p,0); }); html += `</div>`; }
     subs.forEach(s=>{ html += catNodeHTML(s, depth+1); });
   }
@@ -591,15 +616,21 @@ function reorderInsert(list, id, relId, after){
 function afterMidpoint(e, el){ const r=el.getBoundingClientRect(); return (e.clientY - r.top) > r.height/2; }
 function clearDragHighlights(){ document.querySelectorAll('.drag-over,.drag-over-nest').forEach(el=>el.classList.remove('drag-over','drag-over-nest')); }
 
-function moveTaskTo(taskId, toProj, toState, relId, after){
+function moveTaskTo(taskId, toOwner, toState, relId, after){
   const t = data.tasks.find(x=>x.id===taskId); if(!t) return;
-  const fromProj=t.project_id, fromState=t.state||'todo';
-  const list = reorderInsert(tasksOf(toProj).map(x=>x.id), taskId, relId, after);
-  const needsMove = fromProj!==toProj || fromState!==toState;
-  if(needsMove){ t.project_id=toProj; t.state=toState; }
+  const fromOwner = t.project_id ? {project_id:t.project_id} : {category:t.category||''};
+  const fromState = t.state||'todo';
+  const list = reorderInsert(tasksOfOwner(toOwner).map(x=>x.id), taskId, relId, after);
+  const ownerChanged = (fromOwner.project_id||'')!==(toOwner.project_id||'') || (fromOwner.category||'')!==(toOwner.category||'');
+  const needsMove = ownerChanged || fromState!==toState;
+  if(needsMove){
+    t.project_id = toOwner.project_id || null;
+    t.category = toOwner.project_id ? null : (toOwner.category || '');
+    t.state = toState;
+  }
   list.forEach((id,i)=>{ const x=data.tasks.find(y=>y.id===id); if(x) x.sort=i; });
   render();
-  if(needsMove) sendOp({op:'updateTask', id:taskId, patch:{project_id:toProj, state:toState}});
+  if(needsMove) sendOp({op:'updateTask', id:taskId, patch:{project_id:t.project_id, category:t.category, state:toState}});
   sendOp({op:'reorderTasks', ids:list});
 }
 function reorderProjectTo(dragId, catName, parentId, relId, after){
@@ -657,11 +688,13 @@ function findDropTarget(e){
   if(!dragInfo) return null;
   if(dragInfo.type==='task'){
     const taskEl = e.target.closest('[data-drag="task"]');
-    if(taskEl && taskEl.dataset.id!==dragInfo.id) return {el:taskEl, kind:'task', id:taskEl.dataset.id, projectId:taskEl.dataset.project, state:taskEl.dataset.state};
+    if(taskEl && taskEl.dataset.id!==dragInfo.id) return {el:taskEl, kind:'task', id:taskEl.dataset.id, owner:{project_id:taskEl.dataset.project||null, category:taskEl.dataset.cat||''}, state:taskEl.dataset.state};
     const bucketEl = e.target.closest('[data-drop="bucket"]');
-    if(bucketEl) return {el:bucketEl, kind:'bucket', projectId:bucketEl.dataset.project, state:bucketEl.dataset.state};
+    if(bucketEl) return {el:bucketEl, kind:'bucket', owner:{project_id:bucketEl.dataset.project||null, category:bucketEl.dataset.cat||''}, state:bucketEl.dataset.state};
     const projEl = e.target.closest('[data-drag="project"]');
     if(projEl) return {el:projEl, kind:'project-drop-task', projectId:projEl.dataset.id};
+    const catElT = e.target.closest('[data-drag="category"]');
+    if(catElT) return {el:catElT, kind:'category-drop-task', cat:catElT.dataset.cat};
     return null;
   }
   if(dragInfo.type==='project'){
@@ -705,9 +738,10 @@ function onDragEnd(){ dragInfo=null; clearDragHighlights(); }
 
 function performDrop(e, drag, target){
   if(drag.type==='task'){
-    if(target.kind==='task') moveTaskTo(drag.id, target.projectId, target.state, target.id, afterMidpoint(e,target.el));
-    else if(target.kind==='bucket') moveTaskTo(drag.id, target.projectId, target.state, null, false);
-    else if(target.kind==='project-drop-task') moveTaskTo(drag.id, target.projectId, 'todo', null, false);
+    if(target.kind==='task') moveTaskTo(drag.id, target.owner, target.state, target.id, afterMidpoint(e,target.el));
+    else if(target.kind==='bucket') moveTaskTo(drag.id, target.owner, target.state, null, false);
+    else if(target.kind==='project-drop-task') moveTaskTo(drag.id, {project_id:target.projectId}, 'todo', null, false);
+    else if(target.kind==='category-drop-task') moveTaskTo(drag.id, {category:target.cat}, 'todo', null, false);
   } else if(drag.type==='project'){
     if(target.kind==='project'){
       if(target.nest) nestProject(drag.id, target.id);
@@ -815,6 +849,7 @@ function onBoardKey(e){
   const el=e.target.closest('[data-key]'); if(!el) return;
   const v=el.value.trim(); if(!v) return;
   if(el.dataset.key==='add-task'){ sendOp({op:'addTask', project_id:el.dataset.id, name:v}); el.value=''; }
+  else if(el.dataset.key==='add-cat-task'){ sendOp({op:'addTask', category:el.dataset.cat, name:v}); el.value=''; }
   else if(el.dataset.key==='add-tag'){
     const p=projById(el.dataset.id); const tags = p&&p.tags ? [...p.tags] : [];
     if(!tags.includes(v)){ tags.push(v); localProj(el.dataset.id,{tags}); sendOp({op:'updateProject', id:el.dataset.id, patch:{tags}}); }
