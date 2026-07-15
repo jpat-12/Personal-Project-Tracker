@@ -80,17 +80,40 @@ sudo systemctl restart tracker
 
 ## Telegram
 
-Message your bot:
+### Natural language (set `ANTHROPIC_API_KEY`)
+
+Just say what you want — no syntax required:
+
+```
+add a high priority task to fix the radio config tool under TAK-CAP
+mark the reporting dashboard project as done
+what's still open under Infra?
+```
+
+Claude reads the message, looks up existing categories/projects with read-only
+tools before acting (so it reuses `TAK-CAP` instead of creating `Tak Cap`),
+calls the right tool (add/update project, add/update task, add category), and
+replies with a short confirmation. If your message is ambiguous — which
+project, which category — it asks a clarifying question back over Telegram
+instead of guessing; the conversation keeps a short rolling memory per chat so
+your answer is understood as a follow-up, not a new request. Calls the Claude
+API directly over HTTPS (no SDK, no pip install) using `CLAUDE_MODEL`
+(default `claude-opus-4-8`) — costs apply per message. Leave
+`ANTHROPIC_API_KEY` blank to fall back to the syntax below.
+
+### Rigid syntax (fallback, or when no API key is set)
 
 ```
 #TAK-CAP !High Radio config tool | needs the new repeater list
 ```
 
-`#Category` and `!Priority` are optional (default `#Other` / `!Medium`). Commands:
+`#Category` and `!Priority` are optional (default `#Other` / `!Medium`).
+
+### Commands (always available, both modes)
 
 | Command | Does |
 |---|---|
-| `#Cat !Pri Title \| Description` | Add a project to a category |
+| `#Cat !Pri Title \| Description` | Add a project to a category (fallback mode only) |
 | `/task <ProjectID> <text>` | Add a task to a project |
 | `/done <ProjectID>` | Mark a project Complete |
 | `/status` | List active projects |

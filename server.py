@@ -17,6 +17,10 @@ One process, standard library only:
 Config via env (see config.example.env):
   WEBROOT (.)  PORT (8182)  BIND (0.0.0.0)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   (optional — omit to disable Telegram)
+  ANTHROPIC_API_KEY, CLAUDE_MODEL         (optional — omit to keep the old rigid
+                                           #Category !Priority parser; set the key
+                                           to let Claude parse free-form messages,
+                                           call tools, and ask clarifying questions)
   TRACKER_PASSWORD                       (optional — omit to leave the board open)
 DB path: $TRACKER_DB or $STATE_DIRECTORY/tracker.db
 
@@ -49,6 +53,9 @@ BIND = os.environ.get("BIND", "0.0.0.0")
 
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-8").strip()
 
 TRACKER_PASSWORD = os.environ.get("TRACKER_PASSWORD", "").strip()
 COOKIE_NAME = "tracker_session"
@@ -421,17 +428,24 @@ def parse_task_message(text):
 
 def tg_cmd_help():
     cats = "\n".join(f"  #{c}" for c in db.category_names())
-    tg_reply(
-        "Add a project:\n"
-        "#TAK-CAP !High Radio config tool | Needs the new repeater list\n\n"
-        f"Categories:\n{cats}\n\n"
-        "Priorities: !Critical !High !Medium !Low (default Medium)\n\n"
+    commands = (
         "Commands:\n"
         "/status - active projects\n"
         "/find <keyword> - search\n"
         "/task <ProjectID> <task text> - add a task to a project\n"
         "/done <ProjectID> - mark a project Complete\n"
         "/categories - list categories")
+    if ANTHROPIC_API_KEY:
+        tg_reply(
+            "Just tell me what you want in plain English — e.g. \"add a high priority "
+            "task to fix the radio config tool under TAK-CAP\" or \"mark the reporting "
+            "dashboard project as done\". I'll ask if I need more info.\n\n" + commands)
+    else:
+        tg_reply(
+            "Add a project:\n"
+            "#TAK-CAP !High Radio config tool | Needs the new repeater list\n\n"
+            f"Categories:\n{cats}\n\n"
+            "Priorities: !Critical !High !Medium !Low (default Medium)\n\n" + commands)
 
 
 def tg_cmd_status():
@@ -474,6 +488,260 @@ def tg_cmd_task(rest):
     tg_reply(f'➕ Added task to {p["id"]}: "{text}"')
 
 
+# ── Claude-powered natural-language Telegram interface ─────────────────────
+# Only active when ANTHROPIC_API_KEY is set; otherwise falls back to the rigid
+# #Category !Priority parser above. Raw HTTPS via urllib (no SDK / pip install)
+# to keep this project stdlib-only, matching the rest of server.py.
+
+CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_MAX_ITERS = 6          # tool-call round trips per incoming message
+CLAUDE_HISTORY_TURNS = 24     # rolling window of messages kept per chat
+
+_convo_lock = threading.Lock()
+_conversations = {}  # chat_id -> list[{"role": ..., "content": ...}]
+
+CLAUDE_TOOLS = [
+    {
+        "name": "list_categories",
+        "description": "List all existing categories (and their parent, for sub-categories). Call this before creating a new category if you're not sure one already exists.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "search_projects",
+        "description": "Search existing projects by name/description/ID keyword. Use this to find a project's ID before updating it, adding a task to it, or marking it done — never guess an ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Keyword to search for"}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "add_project",
+        "description": "Create a new project. Prefer reusing an existing category name (from list_categories) over inventing a new one, unless the user clearly wants a new one.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Project name/title"},
+                "category": {"type": "string", "description": "Category name; omit or empty string for uncategorized"},
+                "description": {"type": "string"},
+                "status": {"type": "string", "enum": ["Planning", "Active", "Blocked", "Review", "Complete", "Backlog"]},
+                "priority": {"type": "string", "enum": ["Critical", "High", "Medium", "Low"]},
+                "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "update_project",
+        "description": "Update an existing project. Get project_id from search_projects first. Only include fields that should change.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "name": {"type": "string"},
+                "category": {"type": "string"},
+                "status": {"type": "string", "enum": ["Planning", "Active", "Blocked", "Review", "Complete", "Backlog"]},
+                "priority": {"type": "string", "enum": ["Critical", "High", "Medium", "Low"]},
+                "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
+                "description": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["project_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "add_task",
+        "description": "Add a task, either to a project (project_id, from search_projects) or directly to a category (category name) — provide exactly one of the two, never both.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Task text"},
+                "project_id": {"type": "string"},
+                "category": {"type": "string"},
+                "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "update_task",
+        "description": "Update a task's name, state, or due date. Get task_id via search_projects context or by asking the user for the project so you can look it up — if you don't know the task_id, ask the user instead of guessing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "name": {"type": "string"},
+                "state": {"type": "string", "enum": ["todo", "doing", "done"]},
+                "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
+            },
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "add_category",
+        "description": "Create a new category, optionally as a sub-category of an existing one.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "parent": {"type": "string", "description": "Existing parent category name, for a sub-category"},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    },
+]
+
+
+def claude_system_prompt():
+    today = time.strftime("%Y-%m-%d (%A)")
+    cats = db.category_names()
+    cat_list = ", ".join(cats) if cats else "(none yet — any category you use will be created)"
+    return (
+        "You are the natural-language interface to a personal project tracker, reached via Telegram. "
+        "The user will describe what they want in plain English — do not require any special syntax. "
+        f"Today's date is {today}. Existing categories: {cat_list}.\n\n"
+        "Use the provided tools to make changes (add/update projects, tasks, categories) and to look "
+        "things up (search_projects, list_categories) before acting — never guess a project_id or "
+        "task_id; search for it first. Prefer reusing an existing category over creating a near-duplicate.\n\n"
+        "If the request is ambiguous or missing something you need (which project, which category, "
+        "what priority), do NOT call a tool — instead reply with a short, specific clarifying question "
+        "in plain text. Once you have everything you need and have made the change(s), reply with a "
+        "brief, friendly confirmation in plain text (no tool call) summarizing what you did. Keep all "
+        "replies short — this is a Telegram chat, not a report."
+    )
+
+
+def claude_call(messages):
+    body = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": 1024,
+        "system": claude_system_prompt(),
+        "tools": CLAUDE_TOOLS,
+        "messages": messages,
+    }
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        CLAUDE_API_URL,
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def claude_run_tool(name, inp):
+    """Execute one Claude tool call against db.py. Returns (result_text, changed)."""
+    try:
+        if name == "list_categories":
+            cats = [{"name": c["name"], "parent": c.get("parent")} for c in db.get_state()["categories"]]
+            return json.dumps(cats), False
+        if name == "search_projects":
+            q = inp.get("query", "")
+            rows = db.find_projects(q, limit=10)
+            out = [{"id": p["id"], "name": p["name"], "category": p["category"], "status": p["status"]} for p in rows]
+            return json.dumps(out) if out else "No matches.", False
+        if name == "add_project":
+            pid = db.add_project(
+                inp.get("category") or "", inp["name"],
+                description=inp.get("description", ""), status=inp.get("status", "Planning"),
+                priority=inp.get("priority", "Medium"), due_date=inp.get("due_date") or None,
+                tags=inp.get("tags") or [])
+            return f"Created project {pid}.", True
+        if name == "update_project":
+            pid = inp["project_id"]
+            if not db.get_project(pid):
+                return f"No project with ID {pid}.", False
+            patch = {k: v for k, v in inp.items() if k not in ("project_id",)}
+            db.update_project(pid, patch)
+            return f"Updated project {pid}.", True
+        if name == "add_task":
+            project_id = inp.get("project_id") or None
+            category = inp.get("category") or None
+            if not project_id and not category:
+                return "Need either project_id or category to add a task.", False
+            if project_id and not db.get_project(project_id):
+                return f"No project with ID {project_id}.", False
+            tid = db.add_task(inp["name"], project_id=project_id, category=category,
+                              due_date=inp.get("due_date") or None)
+            return f"Added task {tid}.", True
+        if name == "update_task":
+            tid = inp["task_id"]
+            patch = {k: v for k, v in inp.items() if k not in ("task_id",)}
+            db.update_task(tid, patch)
+            return f"Updated task {tid}.", True
+        if name == "add_category":
+            db.add_category(inp["name"], inp.get("parent") or None)
+            return f"Created category {inp['name']}.", True
+        return f"Unknown tool {name}.", False
+    except Exception as e:
+        return f"Error: {e}", False
+
+
+def _get_history(chat_id):
+    with _convo_lock:
+        return list(_conversations.get(chat_id, []))
+
+
+def _save_history(chat_id, messages):
+    with _convo_lock:
+        _conversations[chat_id] = messages[-CLAUDE_HISTORY_TURNS:]
+
+
+def tg_handle_claude(text, chat_id):
+    """Natural-language flow: Claude parses the message, calls tools, or asks
+    a clarifying question. Returns True if any tool call changed the DB."""
+    history = _get_history(chat_id)
+    history.append({"role": "user", "content": text})
+    changed_any = False
+
+    for _ in range(CLAUDE_MAX_ITERS):
+        try:
+            resp = claude_call(history)
+        except Exception as e:
+            log(f"claude call failed: {e}")
+            tg_reply("Sorry, I couldn't reach Claude just now — try again in a moment.")
+            return changed_any
+
+        if "error" in resp:
+            log(f"claude error: {resp['error']}")
+            tg_reply(f"Claude error: {resp['error'].get('message', 'unknown error')}")
+            return changed_any
+
+        content = resp.get("content", [])
+        history.append({"role": "assistant", "content": content})
+
+        tool_uses = [b for b in content if b.get("type") == "tool_use"]
+        if not tool_uses:
+            text_out = " ".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
+            if text_out:
+                tg_reply(text_out)
+            _save_history(chat_id, history)
+            return changed_any
+
+        tool_results = []
+        for tu in tool_uses:
+            result_text, changed = claude_run_tool(tu["name"], tu.get("input", {}))
+            changed_any = changed_any or changed
+            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
+        history.append({"role": "user", "content": tool_results})
+
+    tg_reply("That took more steps than expected — try rephrasing or breaking it into a simpler request.")
+    _save_history(chat_id, history)
+    return changed_any
+
+
 def tg_handle(text):
     low = text.strip().lower()
     if low in ("/start", "/help"):
@@ -488,6 +756,10 @@ def tg_handle(text):
         tg_cmd_task(text.strip()[5:].strip()); return True
     if low.startswith("/done"):
         tg_cmd_done(text.strip()[5:].strip()); return True
+
+    if ANTHROPIC_API_KEY:
+        return tg_handle_claude(text, TG_CHAT)
+
     parsed = parse_task_message(text)
     if not parsed:
         tg_reply("Couldn't parse that. Send /help for the format."); return False
