@@ -172,6 +172,15 @@
   .legend b{color:var(--ink-dim);}
   footer{text-align:center;padding:24px 20px 0;font-family:'JetBrains Mono';font-size:10px;color:var(--ink-faint);letter-spacing:0.04em;}
   #loading{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono';color:var(--ink-faint);font-size:12px;letter-spacing:0.08em;text-transform:uppercase;z-index:100;}
+  #loginGate{position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center;z-index:150;padding:20px;}
+  #loginGate.show{display:flex;}
+  .login-box{width:100%;max-width:320px;text-align:center;}
+  .login-box h1{font-family:'Oswald',sans-serif;font-weight:700;font-size:24px;text-transform:uppercase;letter-spacing:0.04em;margin:0 0 4px;}
+  .login-box h1 span{color:var(--accent);}
+  .login-sub{color:var(--ink-dim);font-size:12.5px;margin:0 0 18px;}
+  #loginPw{width:100%;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:5px;padding:11px 12px;font-size:14px;text-align:center;margin-bottom:10px;font-family:'Inter';}
+  #loginPw:focus{outline:none;border-color:var(--accent);}
+  .login-err{color:var(--ember);font-size:12px;margin-top:10px;min-height:16px;}
   #conn{position:fixed;left:0;right:0;bottom:0;background:var(--ember);color:#2a0f06;font-family:'JetBrains Mono';font-size:11px;text-align:center;padding:8px;transform:translateY(110%);transition:.25s;z-index:60;}
   #conn.show{transform:translateY(0);}
 
@@ -206,6 +215,15 @@
 </head>
 <body>
 <div id="loading">Loading tracker…</div>
+<div id="loginGate">
+  <div class="login-box">
+    <h1>PROJECT<span>·</span>TRACKER</h1>
+    <p class="login-sub">Enter password to continue</p>
+    <input type="password" id="loginPw" placeholder="Password" autocomplete="current-password">
+    <button id="loginBtn" class="btn-add" style="width:100%;">Unlock</button>
+    <div class="login-err" id="loginErr"></div>
+  </div>
+</div>
 <div class="wrap" id="app" style="display:none;">
   <aside class="sidebar">
     <div class="brand-row">
@@ -219,7 +237,7 @@
     </div>
     <div class="stat-strip" id="statStrip"></div>
     <div class="rail-scroll"><div class="rail" id="rail"></div></div>
-    <div class="sidebar-foot"><button class="mini-btn" id="addCatBtn">+ Add category</button></div>
+    <div class="sidebar-foot" id="sidebarFoot"><button class="mini-btn" id="addCatBtn">+ Add category</button></div>
   </aside>
   <main class="main">
     <div class="toolbar" id="toolbar"></div>
@@ -251,7 +269,7 @@ let ui = { view:'gallery', filterCat:'all', groupBy:'category', open:{}, collaps
 const MY_ID = 'u'+Math.random().toString(36).slice(2,9);
 const UI_KEY = 'ppt-ui-v3';
 const CACHE_KEY = 'ppt-cache-v3';
-let SYNC = false, es = null;
+let SYNC = false, es = null, authRequired = false;
 
 function saveUI(){ try{ localStorage.setItem(UI_KEY, JSON.stringify(ui)); }catch(e){} }
 function loadUI(){ try{ const u=JSON.parse(localStorage.getItem(UI_KEY)||'null'); if(u) ui=Object.assign(ui,u); }catch(e){} ui.open=ui.open||{}; ui.collapsedCats=ui.collapsedCats||{}; }
@@ -296,16 +314,26 @@ async function sendOp(op){
   op.originId = MY_ID;
   try{
     const r = await fetch('api/op',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(op)});
+    if(r.status===401){ showLoginGate(); return; }
     if(!r.ok) throw 0;
     setConn(true);
   }catch(e){ setConn(false); }
 }
-function ingest(d){ data={categories:d.categories||[],projects:d.projects||[],tasks:d.tasks||[],rev:d.rev||0}; cache(); render(); }
+function ingest(d){ data={categories:d.categories||[],projects:d.projects||[],tasks:d.tasks||[],rev:d.rev||0}; authRequired=!!d.authRequired; cache(); render(); }
+function showApp(){ hideLoginGate(); document.getElementById('app').style.display=''; }
 async function connect(){
   try{
-    const r = await fetch('api/state',{cache:'no-store'}); if(!r.ok) throw 0;
-    ingest(await r.json()); SYNC=true; setConn(true);
-  }catch(e){ SYNC=false; setConn(false); return; }
+    const r = await fetch('api/state',{cache:'no-store'});
+    if(r.status===401){ showLoginGate(); SYNC=false; return; }
+    if(!r.ok) throw 0;
+    ingest(await r.json());   // ingest() re-renders with live data
+    SYNC=true; setConn(true);
+    showApp();
+  }catch(e){
+    SYNC=false; setConn(false);
+    showApp();   // still show the app — init() already rendered cached/local data synchronously
+    return;
+  }
   try{
     es = new EventSource('api/events');
     es.onmessage = e=>{ try{ ingest(JSON.parse(e.data)); setConn(true); }catch(_){} };
@@ -313,12 +341,42 @@ async function connect(){
   }catch(e){}
 }
 
+// ---------------- auth (login gate) ----------------
+function showLoginGate(){
+  document.getElementById('app').style.display='none';
+  const gate=document.getElementById('loginGate');
+  gate.classList.add('show');
+  const pw=document.getElementById('loginPw');
+  document.getElementById('loginErr').textContent='';
+  pw.value=''; pw.focus();
+}
+function hideLoginGate(){ document.getElementById('loginGate').classList.remove('show'); }
+async function attemptLogin(){
+  const pw = document.getElementById('loginPw').value;
+  const errEl = document.getElementById('loginErr');
+  errEl.textContent='';
+  try{
+    const r = await fetch('api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:pw})});
+    if(r.ok){ await connect(); }
+    else { errEl.textContent='Incorrect password.'; document.getElementById('loginPw').focus(); }
+  }catch(e){ errEl.textContent='Could not reach server.'; }
+}
+async function doLogout(){
+  try{ await fetch('api/logout',{method:'POST'}); }catch(e){}
+  location.reload();
+}
+
 // optimistic local mutation for snappy toggles (server SSE reconciles)
 function localTask(id, patch){ const t=data.tasks.find(x=>x.id===id); if(t){ Object.assign(t,patch); render(); } }
 function localProj(id, patch){ const p=projById(id); if(p){ Object.assign(p,patch); render(); } }
 
 // ---------------- rendering: sidebar ----------------
-function render(){ renderRail(); renderStats(); renderProgress(); renderToolbar(); renderBoard(); }
+function render(){ renderRail(); renderStats(); renderProgress(); renderToolbar(); renderBoard(); renderSidebarFoot(); }
+function renderSidebarFoot(){
+  const el=document.getElementById('sidebarFoot');
+  el.innerHTML = `<button class="mini-btn" id="addCatBtn">+ Add category</button>`
+    + (authRequired ? `<button class="mini-btn" id="logoutBtn" style="margin-top:8px;">Log out</button>` : '');
+}
 
 function renderRail(){
   const rail=document.getElementById('rail');
@@ -795,9 +853,14 @@ function init(){
   document.addEventListener('dragend', onDragEnd);
   document.getElementById('toolbar').addEventListener('click', onToolbar);
   document.getElementById('rail').addEventListener('click', onRail);
-  document.getElementById('addCatBtn').addEventListener('click', ()=>{ const n=prompt('New category name:'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim()}); });
+  document.getElementById('sidebarFoot').addEventListener('click', (e)=>{
+    if(e.target.closest('#addCatBtn')){ const n=prompt('New category name:'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim()}); }
+    else if(e.target.closest('#logoutBtn')){ doLogout(); }
+  });
   overlay().addEventListener('click', onModal);
   document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+  document.getElementById('loginBtn').addEventListener('click', attemptLogin);
+  document.getElementById('loginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') attemptLogin(); });
   connect();
 }
 init();

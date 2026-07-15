@@ -58,8 +58,24 @@ The service serves on `:8182`, keeps its database at
 ```
 TELEGRAM_BOT_TOKEN=123456:ABC...     # from @BotFather; blank = Telegram disabled
 TELEGRAM_CHAT_ID=7665804382          # your numeric chat id
+TRACKER_PASSWORD=                    # blank = board is open; set it to require a login
 PORT=8182
 BIND=0.0.0.0
+```
+
+## Password protection
+
+Set `TRACKER_PASSWORD` in `config.env` and restart the service to require a
+login. It's a single shared password (no per-user accounts) — enter it once
+and the board remembers you for 30 days via an HttpOnly session cookie.
+`index.html` itself is always served (it holds no data), but `/api/state`,
+`/api/op`, and `/api/events` all require a valid session, so the underlying
+data is never exposed to an unauthenticated request. A **Log out** button
+appears in the sidebar whenever a password is set.
+
+```bash
+sudo nano /etc/tracker/config.env    # set TRACKER_PASSWORD=your-passphrase
+sudo systemctl restart tracker
 ```
 
 ## Telegram

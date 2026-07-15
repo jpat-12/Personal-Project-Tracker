@@ -4,29 +4,41 @@ server.py — web board + Telegram poller for the Personal Project Tracker.
 
 One process, standard library only:
   - serves index.html and a JSON API backed by SQLite (db.py, the source of truth)
-  - GET  /api/state   -> {categories, projects, tasks, rev}
-  - POST /api/op      -> mutate (addProject/updateProject/deleteProject/
-                          addTask/updateTask/deleteTask/addCategory) {..., originId}
+  - GET  /api/state   -> {categories, projects, tasks, rev, authRequired}
+  - POST /api/op      -> mutate (addProject/updateProject/deleteProject/addTask/
+                          updateTask/deleteTask/addCategory/renameCategory/
+                          deleteCategory/updateCategory/reorderTasks/
+                          reorderProjects/reorderCategories) {..., originId}
   - GET  /api/events  -> Server-Sent Events; pushes full state on every change
+  - POST /api/login, /api/logout -> session cookie auth (see below)
   - background thread polls Telegram and writes the same DB (see telegram.py-style
     logic below); its changes broadcast to the board live too.
 
 Config via env (see config.example.env):
   WEBROOT (.)  PORT (8182)  BIND (0.0.0.0)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   (optional — omit to disable Telegram)
+  TRACKER_PASSWORD                       (optional — omit to leave the board open)
 DB path: $TRACKER_DB or $STATE_DIRECTORY/tracker.db
+
+Auth (only active if TRACKER_PASSWORD is set): a single shared password gates
+/api/state, /api/op and /api/events. POST /api/login sets an HttpOnly session
+cookie (30 days); POST /api/logout clears it. index.html itself is always
+served (it holds no data) so the SPA can show its own login screen.
 """
 
+import hmac
 import json
 import mimetypes
 import os
 import posixpath
 import queue
+import secrets
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import db
@@ -38,6 +50,12 @@ BIND = os.environ.get("BIND", "0.0.0.0")
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
+TRACKER_PASSWORD = os.environ.get("TRACKER_PASSWORD", "").strip()
+COOKIE_NAME = "tracker_session"
+SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
+SESSIONS = {}                     # token -> expiry epoch seconds (in-memory; cleared on restart)
+_sess_lock = threading.Lock()
+
 _subscribers = set()  # set[queue.Queue]
 
 
@@ -48,8 +66,14 @@ def log(msg):
 
 # ── broadcast ─────────────────────────────────────────────────────────────
 
-def push_state(origin=None):
+def public_state():
     state = db.get_state()
+    state["authRequired"] = bool(TRACKER_PASSWORD)
+    return state
+
+
+def push_state(origin=None):
+    state = public_state()
     state["originId"] = origin
     payload = "data: " + json.dumps(state) + "\n\n"
     for q in list(_subscribers):
@@ -151,20 +175,76 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _get_token(self):
+        raw = self.headers.get("Cookie")
+        if not raw:
+            return None
+        c = SimpleCookie()
+        try:
+            c.load(raw)
+        except Exception:
+            return None
+        m = c.get(COOKIE_NAME)
+        return m.value if m else None
+
+    def _is_authed(self):
+        if not TRACKER_PASSWORD:
+            return True
+        tok = self._get_token()
+        if not tok:
+            return False
+        with _sess_lock:
+            exp = SESSIONS.get(tok)
+        return bool(exp and exp > time.time())
+
+    def _set_session_cookie(self, token, max_age):
+        c = SimpleCookie()
+        c[COOKIE_NAME] = token
+        c[COOKIE_NAME]["httponly"] = True
+        c[COOKIE_NAME]["secure"] = True
+        c[COOKIE_NAME]["samesite"] = "Lax"
+        c[COOKIE_NAME]["path"] = "/"
+        c[COOKIE_NAME]["max-age"] = max_age
+        self.send_header("Set-Cookie", c[COOKIE_NAME].OutputString())
+
+    def _clear_session_cookie(self):
+        c = SimpleCookie()
+        c[COOKIE_NAME] = ""
+        c[COOKIE_NAME]["path"] = "/"
+        c[COOKIE_NAME]["max-age"] = 0
+        self.send_header("Set-Cookie", c[COOKIE_NAME].OutputString())
+
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/state":
-            self._json(db.get_state())
+            if not self._is_authed():
+                self._json({"ok": False, "error": "auth"}, 401)
+                return
+            self._json(public_state())
             return
         if path == "/api/events":
+            if not self._is_authed():
+                self.send_response(401)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             self._sse()
             return
         self._static(path)
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
+        if path == "/api/login":
+            self._handle_login()
+            return
+        if path == "/api/logout":
+            self._handle_logout()
+            return
         if path != "/api/op":
             self.send_error(404)
+            return
+        if not self._is_authed():
+            self._json({"ok": False, "error": "auth"}, 401)
             return
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -183,6 +263,49 @@ class Handler(BaseHTTPRequestHandler):
             push_state(op.get("originId"))
         self._json({"ok": ok, "rev": db.get_rev()})
 
+    def _handle_login(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except Exception:
+            body = {}
+        pw = str(body.get("password", ""))
+        if not TRACKER_PASSWORD:
+            self._json({"ok": True})
+            return
+        if not hmac.compare_digest(pw, TRACKER_PASSWORD):
+            self._json({"ok": False, "error": "bad password"}, 401)
+            return
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        with _sess_lock:
+            for k in [k for k, exp in SESSIONS.items() if exp <= now]:
+                del SESSIONS[k]
+            SESSIONS[token] = now + SESSION_TTL
+        body_bytes = json.dumps({"ok": True}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.send_header("Cache-Control", "no-store")
+        self._set_session_cookie(token, SESSION_TTL)
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
+    def _handle_logout(self):
+        tok = self._get_token()
+        if tok:
+            with _sess_lock:
+                SESSIONS.pop(tok, None)
+        body_bytes = json.dumps({"ok": True}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.send_header("Cache-Control", "no-store")
+        self._clear_session_cookie()
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
     def _sse(self):
         self.close_connection = True
         q = queue.Queue(maxsize=128)
@@ -194,7 +317,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "keep-alive")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
-            state = db.get_state()
+            state = public_state()
             state["originId"] = None
             self.wfile.write(("data: " + json.dumps(state) + "\n\n").encode("utf-8"))
             self.wfile.flush()
