@@ -35,10 +35,25 @@ On the server (e.g. ILWG-Server2), behind a reverse proxy that terminates TLS:
 ```bash
 git clone https://github.com/<you>/Personal-Project-Tracker.git
 cd Personal-Project-Tracker
-cp config.example.env config.env      # then edit config.env (see below)
+cp config.example.env config.env      # then edit config.env (see below) — first install only
 chmod +x deploy.sh
 sudo ./deploy.sh
 ```
+
+**⚠️ After the first install, `/etc/tracker/config.env` is the live config —
+edit it directly, never the repo-local copy.** `deploy.sh` only seeds
+`/etc/tracker/config.env` from the repo-local `config.env` (or the blank
+template) the *first* time it's deployed; every redeploy after that leaves it
+alone. To change a setting (add a Telegram token, an API key, a password),
+edit it in place and restart:
+
+```bash
+sudo nano /etc/tracker/config.env
+sudo systemctl restart tracker
+```
+
+A stale repo-local `config.env` left over from setup is otherwise harmless —
+`deploy.sh` won't touch the live one again once it exists.
 
 Point your proxy at it — e.g. Caddy (auto-TLS, and it streams SSE out of the box):
 

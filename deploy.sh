@@ -42,12 +42,21 @@ install -m 0644 "$SCRIPT_DIR/db.py"      "$WEBROOT/db.py"
 
 echo ">> Config -> $CFG_DIR/config.env"
 install -d -m 0750 "$CFG_DIR"
-if [[ -f "$SCRIPT_DIR/config.env" ]]; then
-  install -m 0600 "$SCRIPT_DIR/config.env" "$CFG_DIR/config.env"
-elif [[ ! -f "$CFG_DIR/config.env" ]]; then
-  install -m 0600 "$SCRIPT_DIR/config.example.env" "$CFG_DIR/config.env"
-  echo "   No config.env found — installed a blank template. Edit $CFG_DIR/config.env"
-  echo "   to add TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID, then: sudo systemctl restart $SERVICE"
+# $CFG_DIR/config.env is the live source of truth once it exists — edit it
+# directly with `sudo nano $CFG_DIR/config.env` and re-run this script safely.
+# It is NEVER overwritten by a redeploy. Only seeded once, on first install,
+# from (in order) a repo-local config.env if present, else the blank template.
+if [[ ! -f "$CFG_DIR/config.env" ]]; then
+  if [[ -f "$SCRIPT_DIR/config.env" ]]; then
+    install -m 0600 "$SCRIPT_DIR/config.env" "$CFG_DIR/config.env"
+    echo "   Seeded $CFG_DIR/config.env from the repo-local config.env (first install)."
+  else
+    install -m 0600 "$SCRIPT_DIR/config.example.env" "$CFG_DIR/config.env"
+    echo "   No config.env found — installed a blank template. Edit $CFG_DIR/config.env"
+    echo "   to add TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID, then: sudo systemctl restart $SERVICE"
+  fi
+else
+  echo "   Already exists — left untouched. Edit it directly: sudo nano $CFG_DIR/config.env"
 fi
 
 echo ">> Writing /etc/systemd/system/${SERVICE}.service"
