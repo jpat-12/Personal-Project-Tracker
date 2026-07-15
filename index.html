@@ -61,6 +61,11 @@
   .gh-count{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-faint);background:var(--surface-2);padding:1px 7px;border-radius:8px;}
   .gh-actions{margin-left:auto;display:flex;gap:5px;}
   .icon-btn.sm{min-height:30px;min-width:30px;font-size:12px;padding:0 6px;}
+  .icon-btn.sm.wide{width:auto;padding:0 9px;font-family:'JetBrains Mono';font-size:10.5px;}
+  .task,.card,.row,.group-head{cursor:grab;}
+  .task:active,.card:active,.row:active,.group-head:active{cursor:grabbing;}
+  .drag-over{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:4px;}
+  .drag-over-nest{outline:2px solid var(--lime);outline-offset:-2px;background:rgba(212,255,92,0.08);border-radius:4px;}
   .tb-left,.tb-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .tb-lbl{font-family:'JetBrains Mono';font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-faint);}
   .catchip{background:rgba(92,200,255,0.12);color:var(--accent);}
@@ -203,15 +208,14 @@
     <div class="brand-row">
       <div>
         <h1>PROJECT<span>·</span>TRACKER</h1>
-        <div class="sub">CATEGORY → PROJECT → TASKS · LIVE · TELEGRAM-FED</div>
       </div>
     </div>
-    <div class="rail-scroll"><div class="rail" id="rail"></div></div>
     <div class="progress-block">
       <div class="progress-label"><span id="progLabel">PORTFOLIO</span><span id="progPct">0%</span></div>
       <div class="progress-track"><div class="progress-fill" id="progFill" style="width:0%"></div></div>
     </div>
     <div class="stat-strip" id="statStrip"></div>
+    <div class="rail-scroll"><div class="rail" id="rail"></div></div>
     <div class="sidebar-foot"><button class="mini-btn" id="addCatBtn">+ Add category</button></div>
   </aside>
   <main class="main">
@@ -364,7 +368,7 @@ function progBar(p){ const c=taskCounts(p); return `<div class="card-prog"><div 
 function cardHTML(p){
   const doing=tasksOf(p.id).find(t=>t.state==='doing');
   const subs=childrenOf(p.id).length;
-  return `<div class="card" data-act="open" data-id="${p.id}">
+  return `<div class="card" draggable="true" data-drag="project" data-act="open" data-id="${p.id}">
     <div class="card-top">
       <div><div class="p-name">${esc(p.name)}</div>
         <div class="chips">${catChip(p)}${priTag(p)}${tagChips(p)}${dueBadge(p.due_date,p.status==='Complete')}</div></div>
@@ -378,7 +382,7 @@ function cardHTML(p){
 }
 function rowHTML(p, depth){
   const c=taskCounts(p), m=STATUS_META[p.status]||STATUS_META.Planning;
-  return `<div class="row" style="--depth:${depth||0}" data-act="open" data-id="${p.id}">
+  return `<div class="row" draggable="true" data-drag="project" style="--depth:${depth||0}" data-act="open" data-id="${p.id}">
     <span class="row-led ${m.cls}"><span class="led" style="width:9px;height:9px;border-radius:50%;display:block;background:currentColor"></span></span>
     <span class="row-name">${esc(p.name)}</span>
     <span class="row-mid">${priTag(p)}${dueBadge(p.due_date,p.status==='Complete')}</span>
@@ -389,47 +393,47 @@ function rowHTML(p, depth){
 }
 function taskHTML(t){
   const st=t.state||'todo';
-  return `<div class="task task-${st}">
+  return `<div class="task task-${st}" draggable="true" data-drag="task" data-id="${t.id}" data-project="${esc(t.project_id)}" data-state="${st}">
     <span class="task-toggle" data-act="cycle-task" data-id="${t.id}" title="To Do → Working → Completed"><span class="tk-dot"></span></span>
     <span class="task-label" data-act="rename-task" data-id="${t.id}" title="Click to rename">${esc(t.name)}</span>
-    <input class="task-due-input" type="date" value="${t.due_date||''}" data-chg="task-due" data-id="${t.id}" title="Due date">
+    <input class="task-due-input" type="date" value="${t.due_date||''}" data-chg="task-due" data-id="${t.id}" title="Due date" draggable="false">
     ${dueBadge(t.due_date, st==='done')}
-    <button class="task-del" data-act="del-task" data-id="${t.id}" title="Delete task">×</button>
+    <button class="task-del" draggable="false" data-act="del-task" data-id="${t.id}" title="Delete task">×</button>
   </div>`;
 }
-function bucketHTML(title, tasks, cls){
-  return `<div class="bucket ${cls}"><h4>${title} <span class="bk-count">${tasks.length}</span></h4>${tasks.length?tasks.map(taskHTML).join(''):'<div class="bucket-empty">—</div>'}</div>`;
+function bucketHTML(title, tasks, cls, projectId, stateKey){
+  return `<div class="bucket ${cls}" data-drop="bucket" data-project="${esc(projectId)}" data-state="${stateKey}"><h4>${title} <span class="bk-count">${tasks.length}</span></h4>${tasks.length?tasks.map(taskHTML).join(''):'<div class="bucket-empty">— drop here —</div>'}</div>`;
 }
 function detailHTML(p, depth){
   const ts=tasksOf(p.id);
   const doing=ts.filter(t=>t.state==='doing'), todo=ts.filter(t=>(t.state||'todo')==='todo'), done=ts.filter(t=>t.state==='done');
   const kids=childrenOf(p.id);
   const isSub = !!p.parent_id;
-  return `<div class="detail${isSub?' sub':''}" style="--depth:${depth||0}">
+  return `<div class="detail${isSub?' sub':''}" draggable="true" data-drag="project" data-id="${p.id}" style="--depth:${depth||0}">
     <div class="detail-head">
       <div class="dh-left">
         <div class="d-name" data-act="collapse" data-id="${p.id}">${esc(p.name)} <span class="chev">▲</span></div>
         <div class="chips">
           <span class="tag catchip">${esc(p.category)}</span>${priTag(p)}
           ${(p.tags||[]).map(t=>`<span class="tag tagchip">#${esc(t)}<span class="tag-x" data-act="untag" data-id="${p.id}" data-tag="${esc(t)}">×</span></span>`).join('')}
-          <input class="tag-add-input" placeholder="+tag" data-key="add-tag" data-id="${p.id}">
+          <input class="tag-add-input" placeholder="+tag" data-key="add-tag" data-id="${p.id}" draggable="false">
           ${dueBadge(p.due_date,p.status==='Complete')}
         </div>
       </div>
       <div class="dh-right">
         ${statusBadge(p,true)}
-        <button class="icon-btn" data-act="edit" data-id="${p.id}" title="Edit">✎</button>
-        <button class="icon-btn danger" data-act="del-project" data-id="${p.id}" title="Delete">🗑</button>
+        <button class="icon-btn" draggable="false" data-act="edit" data-id="${p.id}" title="Edit">✎</button>
+        <button class="icon-btn danger" draggable="false" data-act="del-project" data-id="${p.id}" title="Delete">🗑</button>
       </div>
     </div>
     ${p.description?`<p class="detail-desc">${esc(p.description)}</p>`:'<p class="detail-desc muted">No description — use ✎ to add one.</p>'}
     ${progBar(p)}
     <div class="buckets">
-      ${bucketHTML('Currently Working', doing, 'bk-doing')}
-      ${bucketHTML('To Do', todo, 'bk-todo')}
-      ${bucketHTML('Completed', done, 'bk-done')}
+      ${bucketHTML('Currently Working', doing, 'bk-doing', p.id, 'doing')}
+      ${bucketHTML('To Do', todo, 'bk-todo', p.id, 'todo')}
+      ${bucketHTML('Completed', done, 'bk-done', p.id, 'done')}
     </div>
-    <div class="add-row"><input class="add-input" placeholder="+ add task, press Enter" data-key="add-task" data-id="${p.id}"></div>
+    <div class="add-row"><input class="add-input" placeholder="+ add task, press Enter" data-key="add-task" data-id="${p.id}" draggable="false"></div>
     <div class="subs">
       <h4>Sub-projects <span class="bk-count">${kids.length}</span></h4>
       ${kids.map(ch=> projectNode(ch, (depth||0)+1)).join('')}
@@ -448,12 +452,13 @@ function catNodeHTML(cat, depth){
   const wrap = ()=> ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
   const tops = topProjects(cat.name);
   const subs = subCats(cat.name);
-  let html = `<section class="group catgroup" style="--cd:${depth}"><div class="group-head">`
+  let html = `<section class="group catgroup" style="--cd:${depth}"><div class="group-head" draggable="true" data-drag="category" data-cat="${esc(cat.name)}">`
     + `<span class="gh-label">${depth?'↳ ':''}${esc(cat.name)}</span><span class="gh-count">${tops.length}</span>`
     + `<span class="gh-actions">`
-    + `<button class="icon-btn sm" data-act="add-subcat" data-cat="${esc(cat.name)}" title="Add sub-category">＋</button>`
-    + `<button class="icon-btn sm" data-act="rename-cat" data-cat="${esc(cat.name)}" title="Rename category">✎</button>`
-    + `<button class="icon-btn sm danger" data-act="del-cat" data-cat="${esc(cat.name)}" title="Delete category">🗑</button>`
+    + `<button class="icon-btn sm wide" draggable="false" data-act="add-proj-to-cat" data-cat="${esc(cat.name)}" title="Add project to this category">+ Project</button>`
+    + `<button class="icon-btn sm" draggable="false" data-act="add-subcat" data-cat="${esc(cat.name)}" title="Add sub-category">＋</button>`
+    + `<button class="icon-btn sm" draggable="false" data-act="rename-cat" data-cat="${esc(cat.name)}" title="Rename category">✎</button>`
+    + `<button class="icon-btn sm danger" draggable="false" data-act="del-cat" data-cat="${esc(cat.name)}" title="Delete category">🗑</button>`
     + `</span></div>`;
   if(tops.length){ html += wrap(); tops.forEach(p=>{ html += projectNode(p,0); }); html += `</div>`; }
   html += `</section>`;
@@ -506,6 +511,150 @@ function renderBoard(){
   root.innerHTML = html;
 }
 
+// ---------------- drag & drop (native HTML5 DnD, event-delegated) ----------------
+let dragInfo = null; // {type:'task'|'project'|'category', id/name, projectId?, state?}
+
+function reorderInsert(list, id, relId, after){
+  list = list.filter(x=>x!==id);
+  if(relId==null){ list.push(id); return list; }
+  let idx = list.indexOf(relId);
+  if(idx<0) idx = list.length-1;
+  list.splice(after ? idx+1 : idx, 0, id);
+  return list;
+}
+function afterMidpoint(e, el){ const r=el.getBoundingClientRect(); return (e.clientY - r.top) > r.height/2; }
+function clearDragHighlights(){ document.querySelectorAll('.drag-over,.drag-over-nest').forEach(el=>el.classList.remove('drag-over','drag-over-nest')); }
+
+function moveTaskTo(taskId, toProj, toState, relId, after){
+  const t = data.tasks.find(x=>x.id===taskId); if(!t) return;
+  const fromProj=t.project_id, fromState=t.state||'todo';
+  const list = reorderInsert(tasksOf(toProj).map(x=>x.id), taskId, relId, after);
+  const needsMove = fromProj!==toProj || fromState!==toState;
+  if(needsMove){ t.project_id=toProj; t.state=toState; }
+  list.forEach((id,i)=>{ const x=data.tasks.find(y=>y.id===id); if(x) x.sort=i; });
+  render();
+  if(needsMove) sendOp({op:'updateTask', id:taskId, patch:{project_id:toProj, state:toState}});
+  sendOp({op:'reorderTasks', ids:list});
+}
+function reorderProjectTo(dragId, catName, parentId, relId, after){
+  const dragged = projById(dragId); if(!dragged) return;
+  const siblingsBase = parentId ? childrenOf(parentId).map(p=>p.id) : topProjects(catName).map(p=>p.id);
+  const list = reorderInsert(siblingsBase, dragId, relId, after);
+  const needsMove = dragged.category!==catName || dragged.parent_id!==parentId;
+  if(needsMove){ dragged.category=catName; dragged.parent_id=parentId; }
+  list.forEach((id,i)=>{ const p=projById(id); if(p) p.sort=i; });
+  render();
+  if(needsMove) sendOp({op:'updateProject', id:dragId, patch:{category:catName, parent_id:parentId}});
+  sendOp({op:'reorderProjects', ids:list});
+}
+function nestProject(dragId, targetId){
+  if(dragId===targetId || isDescendant(targetId, dragId)) return; // no-op / would create a cycle
+  const target=projById(targetId), dragged=projById(dragId);
+  if(!target||!dragged) return;
+  dragged.parent_id = targetId; dragged.category = target.category;
+  render();
+  sendOp({op:'updateProject', id:dragId, patch:{parent_id:targetId, category:target.category}});
+}
+function reorderCategoryTo(dragName, parent, relName, after){
+  const dragCat = catByName(dragName); if(!dragCat) return;
+  const siblingsBase = (parent ? subCats(parent) : topCats()).map(c=>c.name);
+  const list = reorderInsert(siblingsBase, dragName, relName, after);
+  const needsReparent = (dragCat.parent||null) !== (parent||null);
+  if(needsReparent) dragCat.parent = parent||null;
+  list.forEach((n,i)=>{ const c=catByName(n); if(c) c.sort=i; });
+  render();
+  if(needsReparent) sendOp({op:'updateCategory', name:dragName, patch:{parent:parent||null}});
+  sendOp({op:'reorderCategories', names:list});
+}
+function nestCategory(dragName, targetName){
+  if(dragName===targetName || catDescendants(dragName).includes(targetName)) return; // no-op / cycle
+  const c=catByName(dragName); if(!c) return;
+  c.parent = targetName;
+  render();
+  sendOp({op:'updateCategory', name:dragName, patch:{parent:targetName}});
+}
+
+function onBoardDragStart(e){
+  if(e.target.closest('input,textarea,select,button')){ e.preventDefault(); dragInfo=null; return; }
+  const taskEl = e.target.closest('[data-drag="task"]');
+  const projEl = !taskEl && e.target.closest('[data-drag="project"]');
+  const catEl = (!taskEl && !projEl) && e.target.closest('[data-drag="category"]');
+  if(taskEl) dragInfo = {type:'task', id:taskEl.dataset.id, projectId:taskEl.dataset.project, state:taskEl.dataset.state};
+  else if(projEl) dragInfo = {type:'project', id:projEl.dataset.id};
+  else if(catEl) dragInfo = {type:'category', name:catEl.dataset.cat};
+  else { dragInfo=null; return; }
+  e.dataTransfer.effectAllowed='move';
+  try{ e.dataTransfer.setData('text/plain', dragInfo.id||dragInfo.name); }catch(_){}
+}
+
+function findDropTarget(e){
+  if(!dragInfo) return null;
+  if(dragInfo.type==='task'){
+    const taskEl = e.target.closest('[data-drag="task"]');
+    if(taskEl && taskEl.dataset.id!==dragInfo.id) return {el:taskEl, kind:'task', id:taskEl.dataset.id, projectId:taskEl.dataset.project, state:taskEl.dataset.state};
+    const bucketEl = e.target.closest('[data-drop="bucket"]');
+    if(bucketEl) return {el:bucketEl, kind:'bucket', projectId:bucketEl.dataset.project, state:bucketEl.dataset.state};
+    const projEl = e.target.closest('[data-drag="project"]');
+    if(projEl) return {el:projEl, kind:'project-drop-task', projectId:projEl.dataset.id};
+    return null;
+  }
+  if(dragInfo.type==='project'){
+    const projEl = e.target.closest('[data-drag="project"]');
+    if(projEl && projEl.dataset.id!==dragInfo.id){
+      const nest = !!e.target.closest('.p-name,.row-name,.d-name');
+      return {el:projEl, kind:'project', id:projEl.dataset.id, nest};
+    }
+    const catEl = e.target.closest('[data-drag="category"]');
+    if(catEl) return {el:catEl, kind:'category-drop-project', cat:catEl.dataset.cat};
+    return null;
+  }
+  if(dragInfo.type==='category'){
+    const catEl = e.target.closest('[data-drag="category"]');
+    if(catEl && catEl.dataset.cat!==dragInfo.name){
+      const nest = !!e.target.closest('.gh-label');
+      return {el:catEl, kind:'category', cat:catEl.dataset.cat, nest};
+    }
+    return null;
+  }
+  return null;
+}
+
+function onBoardDragOver(e){
+  const target = findDropTarget(e);
+  if(!target) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  clearDragHighlights();
+  target.el.classList.add(target.nest ? 'drag-over-nest' : 'drag-over');
+}
+function onBoardDrop(e){
+  const target = findDropTarget(e);
+  clearDragHighlights();
+  if(!target){ dragInfo=null; return; }
+  e.preventDefault();
+  performDrop(e, dragInfo, target);
+  dragInfo = null;
+}
+function onDragEnd(){ dragInfo=null; clearDragHighlights(); }
+
+function performDrop(e, drag, target){
+  if(drag.type==='task'){
+    if(target.kind==='task') moveTaskTo(drag.id, target.projectId, target.state, target.id, afterMidpoint(e,target.el));
+    else if(target.kind==='bucket') moveTaskTo(drag.id, target.projectId, target.state, null, false);
+    else if(target.kind==='project-drop-task') moveTaskTo(drag.id, target.projectId, 'todo', null, false);
+  } else if(drag.type==='project'){
+    if(target.kind==='project'){
+      if(target.nest) nestProject(drag.id, target.id);
+      else { const t=projById(target.id); if(t) reorderProjectTo(drag.id, t.category, t.parent_id, target.id, afterMidpoint(e,target.el)); }
+    } else if(target.kind==='category-drop-project'){
+      reorderProjectTo(drag.id, target.cat, null, null, false);
+    }
+  } else if(drag.type==='category'){
+    if(target.nest) nestCategory(drag.name, target.cat);
+    else { const t=catByName(target.cat); if(t) reorderCategoryTo(drag.name, t.parent||null, target.cat, afterMidpoint(e,target.el)); }
+  }
+}
+
 // ---------------- modal ----------------
 const overlay = ()=>document.getElementById('modalOverlay');
 function catOptionsHTML(selected){
@@ -514,11 +663,12 @@ function catOptionsHTML(selected){
   topCats().forEach(c=>walk(c,0));
   return opts;
 }
-function openModal(id, parentId){
+function openModal(id, parentId, categoryPreset){
   const p = id? projById(id): null;
   const parentPreset = parentId? projById(parentId): null;
   const filterCatReal = (ui.filterCat!=='all' && ui.filterCat!=='__uncat__' && catByName(ui.filterCat)) ? ui.filterCat : '';
-  const cur = p || {name:'',description:'',category:(parentPreset?parentPreset.category:filterCatReal),status:'Planning',priority:'Medium',due_date:'',parent_id:parentId||null,tags:[]};
+  const catPreset = parentPreset ? parentPreset.category : (categoryPreset!=null ? categoryPreset : filterCatReal);
+  const cur = p || {name:'',description:'',category:catPreset,status:'Planning',priority:'Medium',due_date:'',parent_id:parentId||null,tags:[]};
   const parents = data.projects.filter(x=> !p || (x.id!==p.id && !isDescendant(x.id,p.id)));
   overlay().querySelector('.modal').innerHTML = `
     <div class="modal-head"><h3>${p?'Edit project':(parentPreset?'New sub-project':'New project')}</h3><button class="icon-btn" data-mclose>×</button></div>
@@ -574,6 +724,7 @@ function onBoardClick(e){
   else if(a==='edit'){ openModal(id); }
   else if(a==='del-project'){ const p=projById(id); if(confirm('Delete "'+(p?p.name:'')+'" and its sub-projects & tasks?')) sendOp({op:'deleteProject',id}); }
   else if(a==='add-sub'){ openModal(null, id); }
+  else if(a==='add-proj-to-cat'){ openModal(null, null, el.dataset.cat); }
   else if(a==='untag'){ const p=projById(id); if(p){ const tags=(p.tags||[]).filter(t=>t!==el.dataset.tag); localProj(id,{tags}); sendOp({op:'updateProject',id,patch:{tags}}); } }
   else if(a==='rename-cat'){ const cat=el.dataset.cat; const n=prompt('Rename category "'+cat+'" to:', cat); if(n&&n.trim()&&n.trim()!==cat) sendOp({op:'renameCategory', old:cat, new:n.trim()}); }
   else if(a==='add-subcat'){ const parent=el.dataset.cat; const n=prompt('New sub-category of "'+parent+'":'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim(), parent}); }
@@ -629,6 +780,10 @@ function init(){
   bc.addEventListener('click', onBoardClick);
   bc.addEventListener('keydown', onBoardKey);
   bc.addEventListener('change', onBoardChange);
+  bc.addEventListener('dragstart', onBoardDragStart);
+  bc.addEventListener('dragover', onBoardDragOver);
+  bc.addEventListener('drop', onBoardDrop);
+  document.addEventListener('dragend', onDragEnd);
   document.getElementById('toolbar').addEventListener('click', onToolbar);
   document.getElementById('rail').addEventListener('click', onRail);
   document.getElementById('addCatBtn').addEventListener('click', ()=>{ const n=prompt('New category name:'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim()}); });

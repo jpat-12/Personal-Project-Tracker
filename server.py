@@ -104,6 +104,25 @@ def apply_op(op):
         if not op.get("name"):
             return False
         db.delete_category(op["name"])
+    elif kind == "updateCategory":
+        if not op.get("name"):
+            return False
+        db.update_category(op["name"], op.get("patch", {}))
+    elif kind == "reorderTasks":
+        ids = op.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return False
+        db.reorder_tasks(ids)
+    elif kind == "reorderProjects":
+        ids = op.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return False
+        db.reorder_projects(ids)
+    elif kind == "reorderCategories":
+        names = op.get("names")
+        if not isinstance(names, list) or not names:
+            return False
+        db.reorder_categories(names)
     else:
         return False
     return True

@@ -234,6 +234,51 @@ def delete_category(name):
     return target
 
 
+def _category_is_descendant(c, candidate, of_name):
+    """True if the category `candidate` is somewhere under `of_name` in the category tree."""
+    seen = set()
+    cur = candidate
+    while cur and cur not in seen:
+        seen.add(cur)
+        row = c.execute("SELECT parent FROM categories WHERE name=?", (cur,)).fetchone()
+        if not row or not row["parent"]:
+            return False
+        if row["parent"] == of_name:
+            return True
+        cur = row["parent"]
+    return False
+
+
+def update_category(name, patch):
+    """Drag-and-drop support: reparent (patch.parent) and/or reorder (patch.sort) a category.
+    Rejects a parent change that would create a cycle or self-parent."""
+    fields = {}
+    if "parent" in patch:
+        fields["parent"] = (patch["parent"] or "").strip() or None
+    if "sort" in patch:
+        fields["sort"] = patch["sort"]
+    if not fields:
+        return
+    with _lock, _conn() as c:
+        if not c.execute("SELECT 1 FROM categories WHERE name=?", (name,)).fetchone():
+            return
+        if "parent" in fields and fields["parent"]:
+            new_parent = fields["parent"]
+            if new_parent == name or _category_is_descendant(c, new_parent, name):
+                return  # would create a cycle — reject
+        sets = ", ".join(f"{k}=?" for k in fields)
+        c.execute(f"UPDATE categories SET {sets} WHERE name=?", (*fields.values(), name))
+        _bump(c)
+
+
+def reorder_categories(names):
+    """Bulk-set sort=index for exactly the given category names (one sibling group)."""
+    with _lock, _conn() as c:
+        c.executemany("UPDATE categories SET sort=? WHERE name=?",
+                      [(i, n) for i, n in enumerate(names)])
+        _bump(c)
+
+
 def add_project(category, name, description="", status="Planning", priority="Medium",
                 due_date=None, parent_id=None, tags=None):
     cat = (category or "").strip()               # "" = uncategorized
@@ -252,6 +297,21 @@ def add_project(category, name, description="", status="Planning", priority="Med
     return pid
 
 
+def _project_is_descendant(c, candidate_id, of_id):
+    """True if candidate_id is somewhere under of_id in the project tree."""
+    seen = set()
+    cur = candidate_id
+    while cur and cur not in seen:
+        seen.add(cur)
+        row = c.execute("SELECT parent_id FROM projects WHERE id=?", (cur,)).fetchone()
+        if not row or not row["parent_id"]:
+            return False
+        if row["parent_id"] == of_id:
+            return True
+        cur = row["parent_id"]
+    return False
+
+
 def update_project(pid, patch):
     fields = {k: v for k, v in patch.items()
               if k in ("category", "parent_id", "name", "description", "status", "priority", "due_date", "sort", "tags")}
@@ -260,9 +320,21 @@ def update_project(pid, patch):
     if "tags" in fields and isinstance(fields["tags"], list):
         fields["tags"] = json.dumps(fields["tags"])
     fields["updated_at"] = _now()
-    sets = ", ".join(f"{k}=?" for k in fields)
     with _lock, _conn() as c:
+        if "parent_id" in fields and fields["parent_id"]:
+            new_parent = fields["parent_id"]
+            if new_parent == pid or _project_is_descendant(c, new_parent, pid):
+                return  # would create a cycle — reject the whole update
+        sets = ", ".join(f"{k}=?" for k in fields)
         c.execute(f"UPDATE projects SET {sets} WHERE id=?", (*fields.values(), pid))
+        _bump(c)
+
+
+def reorder_projects(ids):
+    """Bulk-set sort=index for exactly the given project ids (one sibling group)."""
+    with _lock, _conn() as c:
+        c.executemany("UPDATE projects SET sort=?, updated_at=? WHERE id=?",
+                      [(i, _now(), pid) for i, pid in enumerate(ids)])
         _bump(c)
 
 
@@ -308,6 +380,14 @@ def update_task(tid, patch):
 def delete_task(tid):
     with _lock, _conn() as c:
         c.execute("DELETE FROM tasks WHERE id=?", (tid,))
+        _bump(c)
+
+
+def reorder_tasks(ids):
+    """Bulk-set sort=index for exactly the given task ids (one project's task list)."""
+    with _lock, _conn() as c:
+        c.executemany("UPDATE tasks SET sort=?, updated_at=? WHERE id=?",
+                      [(i, _now(), tid) for i, tid in enumerate(ids)])
         _bump(c)
 
 
