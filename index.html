@@ -80,7 +80,12 @@
   .tag-x:hover{opacity:1;color:var(--ember);}
   .tag-add-input{background:var(--surface-2);border:1px dashed var(--line);color:var(--ink);border-radius:3px;font-family:'JetBrains Mono';font-size:10px;padding:2px 6px;width:64px;}
   .tag-add-input:focus{outline:none;border-color:var(--accent);}
-  .rail .tab{padding-left:calc(12px + var(--rd,0) * 13px);}
+  .rail .tab{padding-left:calc(12px + var(--rd,0) * 13px);display:flex;flex-direction:row;align-items:center;gap:6px;min-width:max-content;}
+  .rail .tab .n{margin:0;}
+  .rail .tab .c{margin:0;margin-left:4px;}
+  .rail-chev{cursor:pointer;color:var(--ink-faint);font-size:9px;width:12px;flex:0 0 auto;text-align:center;user-select:none;}
+  .rail-chev:hover{color:var(--ink);}
+  .rail-chev-sp{width:12px;flex:0 0 auto;}
   .catgroup{margin-left:calc(var(--cd,0) * 16px);}
   .catgroup .group-head{padding-top:12px;}
 
@@ -268,14 +273,14 @@ const TASK_CYCLE = ["todo","doing","done"];
 
 // ---------------- state ----------------
 let data = { categories:[], projects:[], tasks:[], rev:0 };
-let ui = { view:'gallery', filterCat:'all', groupBy:'category', open:{}, collapsedCats:{} };
+let ui = { view:'gallery', filterCat:'all', groupBy:'category', open:{}, collapsedCats:{}, railCollapsed:{} };
 const MY_ID = 'u'+Math.random().toString(36).slice(2,9);
 const UI_KEY = 'ppt-ui-v3';
 const CACHE_KEY = 'ppt-cache-v3';
 let SYNC = false, es = null, authRequired = false;
 
 function saveUI(){ try{ localStorage.setItem(UI_KEY, JSON.stringify(ui)); }catch(e){} }
-function loadUI(){ try{ const u=JSON.parse(localStorage.getItem(UI_KEY)||'null'); if(u) ui=Object.assign(ui,u); }catch(e){} ui.open=ui.open||{}; ui.collapsedCats=ui.collapsedCats||{}; }
+function loadUI(){ try{ const u=JSON.parse(localStorage.getItem(UI_KEY)||'null'); if(u) ui=Object.assign(ui,u); }catch(e){} ui.open=ui.open||{}; ui.collapsedCats=ui.collapsedCats||{}; ui.railCollapsed=ui.railCollapsed||{}; }
 function cache(){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify(data)); }catch(e){} }
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -384,10 +389,17 @@ function renderSidebarFoot(){
 function renderRail(){
   const rail=document.getElementById('rail');
   const tabs=[{key:'all',label:'All',depth:0,n:data.projects.filter(p=>!p.parent_id).length}];
-  const walk=(cat,depth)=>{ tabs.push({key:cat.name,label:cat.name,depth,n:subtreeCount(cat.name)}); subCats(cat.name).forEach(s=>walk(s,depth+1)); };
+  const walk=(cat,depth)=>{
+    const kids=subCats(cat.name);
+    const collapsed = kids.length>0 && !!ui.railCollapsed[cat.name];
+    tabs.push({key:cat.name,label:cat.name,depth,n:subtreeCount(cat.name),hasKids:kids.length>0,collapsed});
+    if(!collapsed) kids.forEach(s=>walk(s,depth+1));
+  };
   topCats().forEach(c=>walk(c,0));
   if(uncatTop().length) tabs.push({key:'__uncat__',label:'Uncategorized',depth:0,n:uncatTop().length});
-  rail.innerHTML = tabs.map(t=>`<div class="tab${ui.filterCat===t.key?' active':''}" data-cat="${esc(t.key)}" style="--rd:${t.depth||0}"><span class="n">${t.depth?'└ ':''}${esc(t.label)}</span><span class="c">${t.n}</span></div>`).join('');
+  rail.innerHTML = tabs.map(t=>`<div class="tab${ui.filterCat===t.key?' active':''}" data-cat="${esc(t.key)}" style="--rd:${t.depth||0}">`
+    + (t.hasKids ? `<span class="rail-chev" draggable="false" data-railtoggle="${esc(t.key)}" title="${t.collapsed?'Expand':'Collapse'} sub-categories">${t.collapsed?'▶':'▼'}</span>` : (t.depth?'<span class="rail-chev-sp"></span>':''))
+    + `<span class="n">${esc(t.label)}</span><span class="c">${t.n}</span></div>`).join('');
 }
 function renderStats(){
   const c=statusCounts();
@@ -865,7 +877,12 @@ function onToolbar(e){
   const v=e.target.closest('[data-view]'); if(v){ ui.view=v.dataset.view; saveUI(); render(); return; }
   if(e.target.closest('#addProjectBtn')) openModal(null);
 }
-function onRail(e){ const t=e.target.closest('[data-cat]'); if(!t) return; ui.filterCat=t.dataset.cat; saveUI(); render(); }
+function onRail(e){
+  const chev=e.target.closest('[data-railtoggle]');
+  if(chev){ const cat=chev.dataset.railtoggle; if(ui.railCollapsed[cat]) delete ui.railCollapsed[cat]; else ui.railCollapsed[cat]=true; saveUI(); render(); return; }
+  const t=e.target.closest('[data-cat]'); if(!t) return;
+  ui.filterCat=t.dataset.cat; saveUI(); render();
+}
 function onModal(e){
   if(e.target===overlay() || e.target.closest('[data-mclose]')){ closeModal(); return; }
   if(e.target.closest('[data-msave]')){ saveModal(); return; }
