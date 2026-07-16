@@ -166,6 +166,38 @@ Both need Telegram configured; the digest additionally needs `ANTHROPIC_API_KEY`
   decisive Telegram message on what to focus on that day. Fires at most once
   per calendar day.
 
+## GitHub integration
+
+Needs `GITHUB_WEBHOOK_SECRET` **and** `ANTHROPIC_API_KEY` — there's no
+non-Claude fallback here, since deciding what a commit/PR/issue means needs
+real interpretation.
+
+1. In your GitHub repo (or org) → **Settings → Webhooks → Add webhook**:
+   - Payload URL: `https://<your-domain>/api/github-webhook`
+   - Content type: `application/json`
+   - Secret: same value as `GITHUB_WEBHOOK_SECRET`
+   - Events: "Send me everything", or at least Pushes, Pull requests, Issues,
+     Releases
+2. GitHub sends a `ping` on save — check `journalctl -u tracker | grep github`
+   for `ping received (setup OK)` to confirm the secret and URL are right.
+
+From there, every push (to the default branch), opened/merged PR, opened/closed
+issue, and published release gets summarized and handed to Claude, which
+decides whether it's worth a tracker change:
+
+- **Linking** — a project has an optional `repo` field (`owner/repo`), editable
+  manually in the project modal or set automatically by Claude the first time
+  it confidently matches an event to an existing project by name.
+- **What it can do** — link a repo to a project, create a new project for a
+  repo with no match (using judgment — a single trivial commit usually isn't
+  enough), mark a task done when a commit/PR/issue clearly references
+  finishing it, and nudge project status on a merged PR or published release.
+- **When it does nothing** — there's no one to ask a clarifying question here,
+  so if Claude isn't confident which project an event relates to, it does
+  nothing rather than guess. Only actual tracker changes send a Telegram
+  notification (prefixed 🐙) — silence means nothing happened, check the logs
+  if you want to know why.
+
 ## How sync works
 
 - `GET /api/state` → `{categories, projects, tasks, rev}`.

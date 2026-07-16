@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_projects_cat ON projects(category);
 CREATE INDEX IF NOT EXISTS idx_projects_parent ON projects(parent_id);
+CREATE INDEX IF NOT EXISTS idx_projects_repo ON projects(repo);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks(category);
 """
@@ -95,6 +96,9 @@ def init():
         cols = [r["name"] for r in c.execute("PRAGMA table_info(projects)")]
         if "tags" not in cols:
             c.execute("ALTER TABLE projects ADD COLUMN tags TEXT DEFAULT '[]'")
+        # migration: link a project to a GitHub repo ("owner/repo"), for the webhook integration
+        if "repo" not in cols:
+            c.execute("ALTER TABLE projects ADD COLUMN repo TEXT")
         # migration: sub-categories (parent column on categories)
         ccols = [r["name"] for r in c.execute("PRAGMA table_info(categories)")]
         if "parent" not in ccols:
@@ -308,7 +312,7 @@ def reorder_categories(names):
 
 
 def add_project(category, name, description="", status="Planning", priority="Medium",
-                due_date=None, parent_id=None, tags=None):
+                due_date=None, parent_id=None, tags=None, repo=None):
     cat = (category or "").strip()               # "" = uncategorized
     if cat and cat not in _category_names():
         add_category(cat)                        # auto-create unknown category (e.g. from Telegram)
@@ -318,11 +322,17 @@ def add_project(category, name, description="", status="Planning", priority="Med
     with _lock, _conn() as c:
         mx = c.execute("SELECT COALESCE(MAX(sort),-1) FROM projects WHERE category=?", (cat,)).fetchone()[0]
         c.execute(
-            "INSERT INTO projects(id,category,parent_id,name,description,status,priority,due_date,tags,sort,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (pid, cat, parent_id, name, description, status, priority, due_date, tags_json, mx + 1, now, now))
+            "INSERT INTO projects(id,category,parent_id,name,description,status,priority,due_date,tags,repo,sort,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, cat, parent_id, name, description, status, priority, due_date, tags_json, repo or None, mx + 1, now, now))
         _bump(c)
     return pid
+
+
+def find_project_by_repo(repo):
+    with _lock, _conn() as c:
+        row = c.execute("SELECT * FROM projects WHERE repo=?", (repo,)).fetchone()
+        return dict(row) if row else None
 
 
 def _project_is_descendant(c, candidate_id, of_id):
@@ -342,7 +352,7 @@ def _project_is_descendant(c, candidate_id, of_id):
 
 def update_project(pid, patch):
     fields = {k: v for k, v in patch.items()
-              if k in ("category", "parent_id", "name", "description", "status", "priority", "due_date", "sort", "tags")}
+              if k in ("category", "parent_id", "name", "description", "status", "priority", "due_date", "sort", "tags", "repo")}
     if not fields:
         return
     if "tags" in fields and isinstance(fields["tags"], list):

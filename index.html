@@ -76,6 +76,8 @@
   .tb-lbl{font-family:'JetBrains Mono';font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-faint);}
   .catchip{background:rgba(92,200,255,0.12);color:var(--accent);}
   .tagchip{background:rgba(147,184,58,0.14);color:#b7d15a;display:inline-flex;align-items:center;gap:4px;}
+  .repochip{background:var(--surface-2);color:var(--ink-dim);text-decoration:none;cursor:pointer;}
+  .repochip:hover{color:var(--accent);}
   .tag-x{cursor:pointer;color:inherit;opacity:.7;font-weight:700;}
   .tag-x:hover{opacity:1;color:var(--ember);}
   .tag-add-input{background:var(--surface-2);border:1px dashed var(--line);color:var(--ink);border-radius:3px;font-family:'JetBrains Mono';font-size:10px;padding:2px 6px;width:64px;}
@@ -522,6 +524,7 @@ function detailHTML(p, depth){
         <div class="d-name" data-act="collapse" data-id="${p.id}">${esc(p.name)} <span class="chev">▲</span></div>
         <div class="chips">
           <span class="tag catchip">${esc(p.category)}</span>${priTag(p)}
+          ${p.repo ? `<a class="tag repochip" draggable="false" href="https://github.com/${esc(p.repo)}" target="_blank" rel="noopener" title="Linked GitHub repo">🐙 ${esc(p.repo)}</a>` : ''}
           ${(p.tags||[]).map(t=>`<span class="tag tagchip">#${esc(t)}<span class="tag-x" data-act="untag" data-id="${p.id}" data-tag="${esc(t)}">×</span></span>`).join('')}
           <input class="tag-add-input" placeholder="+tag" data-key="add-tag" data-id="${p.id}" draggable="false">
           ${dueBadge(p.due_date,p.status==='Complete')}
@@ -861,7 +864,7 @@ function openModal(id, parentId, categoryPreset){
   const parentPreset = parentId? projById(parentId): null;
   const filterCatReal = (ui.filterCat!=='all' && ui.filterCat!=='__uncat__' && catByName(ui.filterCat)) ? ui.filterCat : '';
   const catPreset = parentPreset ? parentPreset.category : (categoryPreset!=null ? categoryPreset : filterCatReal);
-  const cur = p || {name:'',description:'',category:catPreset,status:'Planning',priority:'Medium',due_date:'',parent_id:parentId||null,tags:[]};
+  const cur = p || {name:'',description:'',category:catPreset,status:'Planning',priority:'Medium',due_date:'',parent_id:parentId||null,tags:[],repo:''};
   const parents = data.projects.filter(x=> !p || (x.id!==p.id && !isDescendant(x.id,p.id)));
   overlay().querySelector('.modal').innerHTML = `
     <div class="modal-head"><h3>${p?'Edit project':(parentPreset?'New sub-project':'New project')}</h3><button class="icon-btn" data-mclose>×</button></div>
@@ -876,6 +879,7 @@ function openModal(id, parentId, categoryPreset){
       <label>Due date<input id="m_due" type="date" value="${cur.due_date||''}"></label>
     </div>
     <label>Tags (comma-separated)<input id="m_tags" value="${esc((cur.tags||[]).join(', '))}"></label>
+    <label>GitHub repo <span style="color:var(--ink-faint);font-weight:400;">(owner/repo, optional)</span><input id="m_repo" placeholder="e.g. jpat-12/FieldTAK" value="${esc(cur.repo||'')}"></label>
     <label>Parent (sub-project of)<select id="m_parent"><option value="">— none (top-level) —</option>${parents.map(x=>`<option value="${x.id}"${cur.parent_id===x.id?' selected':''}>${esc(x.name)} [${esc(x.category)}]</option>`).join('')}</select></label>
     <div class="modal-actions">
       ${p?`<button class="btn-danger" data-mdelete>Delete</button>`:'<span></span>'}
@@ -897,6 +901,7 @@ function saveModal(){
     due_date: document.getElementById('m_due').value || null,
     parent_id: document.getElementById('m_parent').value || null,
     tags: document.getElementById('m_tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+    repo: document.getElementById('m_repo').value.trim() || null,
   };
   if(id){ sendOp({op:'updateProject', id, patch:fields}); }
   else { sendOp({op:'addProject', ...fields}); if(fields.parent_id) ui.open[fields.parent_id]=true, saveUI(); }

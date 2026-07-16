@@ -33,6 +33,7 @@ served (it holds no data) so the SPA can show its own login screen.
 """
 
 import datetime as _dt
+import hashlib
 import hmac
 import json
 import mimetypes
@@ -60,6 +61,7 @@ TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-8").strip()
 DAILY_DIGEST_HOUR = int(os.environ.get("DAILY_DIGEST_HOUR", "8") or "8")  # local hour, 0-23; needs Telegram + Claude
+GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "").strip()  # needs ANTHROPIC_API_KEY too
 REMINDER_DAYS_BEFORE = int(os.environ.get("REMINDER_DAYS_BEFORE", "4") or "4")
 
 TRACKER_PASSWORD = os.environ.get("TRACKER_PASSWORD", "").strip()
@@ -106,7 +108,8 @@ def apply_op(op):
         db.add_project(op.get("category") or "", op["name"].strip(),
                        description=op.get("description", ""), status=op.get("status", "Planning"),
                        priority=op.get("priority", "Medium"), due_date=op.get("due_date") or None,
-                       parent_id=op.get("parent_id") or None, tags=op.get("tags") or [])
+                       parent_id=op.get("parent_id") or None, tags=op.get("tags") or [],
+                       repo=op.get("repo") or None)
     elif kind == "updateProject":
         if not op.get("id"):
             return False
@@ -255,6 +258,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/logout":
             self._handle_logout()
             return
+        if path == "/api/github-webhook":
+            self._handle_github_webhook()
+            return
         if path != "/api/op":
             self.send_error(404)
             return
@@ -320,6 +326,34 @@ class Handler(BaseHTTPRequestHandler):
         self._clear_session_cookie()
         self.end_headers()
         self.wfile.write(body_bytes)
+
+    def _handle_github_webhook(self):
+        if not GITHUB_WEBHOOK_SECRET:
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length) if length else b""
+        sig = self.headers.get("X-Hub-Signature-256", "")
+        expected = "sha256=" + hmac.new(GITHUB_WEBHOOK_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        if not (sig and hmac.compare_digest(sig, expected)):
+            self._json({"ok": False, "error": "bad signature"}, 401)
+            return
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            self._json({"ok": False, "error": "bad json"}, 400)
+            return
+        event = self.headers.get("X-GitHub-Event", "")
+        if event == "ping":
+            log("github webhook: ping received (setup OK)")
+            self._json({"ok": True, "pong": True})
+            return
+        if not ANTHROPIC_API_KEY:
+            log(f"github webhook [{event}] received but ANTHROPIC_API_KEY is not set — ignoring")
+            self._json({"ok": True, "queued": False})
+            return
+        threading.Thread(target=handle_github_event, args=(event, payload), daemon=True).start()
+        self._json({"ok": True, "queued": True})
 
     def _sse(self):
         self.close_connection = True
@@ -534,6 +568,7 @@ CLAUDE_TOOLS = [
                 "priority": {"type": "string", "enum": ["Critical", "High", "Medium", "Low"]},
                 "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
                 "tags": {"type": "array", "items": {"type": "string"}},
+                "repo": {"type": "string", "description": "Linked GitHub repo as 'owner/repo', if this project corresponds to one"},
             },
             "required": ["name"],
             "additionalProperties": False,
@@ -553,6 +588,7 @@ CLAUDE_TOOLS = [
                 "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
                 "description": {"type": "string"},
                 "tags": {"type": "array", "items": {"type": "string"}},
+                "repo": {"type": "string", "description": "Link this project to a GitHub repo as 'owner/repo'"},
             },
             "required": ["project_id"],
             "additionalProperties": False,
@@ -585,6 +621,16 @@ CLAUDE_TOOLS = [
                 "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
             },
             "required": ["task_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_tasks",
+        "description": "List open (not-done) tasks for a project, to find the right task_id before calling update_task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"project_id": {"type": "string"}},
+            "required": ["project_id"],
             "additionalProperties": False,
         },
     },
@@ -663,14 +709,21 @@ def claude_run_tool(name, inp):
         if name == "search_projects":
             q = inp.get("query", "")
             rows = db.find_projects(q, limit=10)
-            out = [{"id": p["id"], "name": p["name"], "category": p["category"], "status": p["status"]} for p in rows]
+            out = [{"id": p["id"], "name": p["name"], "category": p["category"], "status": p["status"], "repo": p.get("repo")} for p in rows]
             return json.dumps(out) if out else "No matches.", False
+        if name == "list_tasks":
+            pid = inp.get("project_id")
+            if not pid or not db.get_project(pid):
+                return f"No project with ID {pid}.", False
+            rows = [t for t in db.get_state()["tasks"] if t.get("project_id") == pid and t.get("state") != "done"]
+            out = [{"id": t["id"], "name": t["name"], "state": t["state"]} for t in rows]
+            return json.dumps(out) if out else "No open tasks.", False
         if name == "add_project":
             pid = db.add_project(
                 inp.get("category") or "", inp["name"],
                 description=inp.get("description", ""), status=inp.get("status", "Planning"),
                 priority=inp.get("priority", "Medium"), due_date=inp.get("due_date") or None,
-                tags=inp.get("tags") or [])
+                tags=inp.get("tags") or [], repo=inp.get("repo") or None)
             return f"Created project {pid}.", True
         if name == "update_project":
             pid = inp["project_id"]
@@ -700,6 +753,120 @@ def claude_run_tool(name, inp):
         return f"Unknown tool {name}.", False
     except Exception as e:
         return f"Error: {e}", False
+
+
+# ── GitHub webhook -> Claude -> tracker update ──────────────────────────────
+# Reuses claude_run_tool/CLAUDE_TOOLS from the Telegram integration, but each
+# webhook delivery is a single, independent decision — there's no human on
+# the other end to answer a clarifying question, so the system prompt tells
+# Claude to do nothing rather than guess when unsure. Requires both
+# GITHUB_WEBHOOK_SECRET (to verify deliveries are really from GitHub) and
+# ANTHROPIC_API_KEY (there's no non-Claude fallback for this one — deciding
+# what a commit/PR/issue means needs real interpretation).
+
+GITHUB_SYSTEM_PROMPT = (
+    "You process one GitHub webhook event (a push, pull request, issue, or release) for a "
+    "personal project tracker. Decide whether it warrants a change to the tracker, then act:\n\n"
+    "1. Call search_projects with the repository's short name to check whether a project is "
+    "already linked to this exact repo (its 'repo' field matches), or plausibly related by name.\n"
+    "2. If a project's repo is already linked, use it directly — call list_tasks on it if the "
+    "event might reference completing specific work.\n"
+    "3. If an unlinked project clearly corresponds to this repo, link it: call update_project "
+    "with repo set to the exact 'owner/repo' string given below.\n"
+    "4. If nothing corresponds at all, use your judgment on whether this repo is worth a new "
+    "project (a single trivial commit usually isn't) — if so, add_project with repo set.\n"
+    "5. If a commit message, PR, or issue clearly indicates specific finished work (e.g. 'fixes X', "
+    "'closes Y', 'implements Z'), and list_tasks finds a matching task, mark it done via update_task.\n"
+    "6. A merged pull request or a published release is a strong signal of progress — consider "
+    "moving the project's status toward Active, Review, or Complete as appropriate.\n\n"
+    "IMPORTANT: nobody is watching to answer a clarifying question. If you aren't reasonably "
+    "confident which project this relates to, or the event doesn't warrant any tracker change "
+    "(e.g. a trivial commit, a draft PR, an unrelated repo), call NO tools — do less, not more.\n\n"
+    "Always end with one short, plain-text sentence summarizing what you did. If you called no "
+    "tools, this sentence is only logged, not sent anywhere — so it doesn't need to be polished, "
+    "just clear enough for a log line."
+)
+
+
+def _gh_summarize_event(event, payload):
+    """Return (repo_full_name, event_text) or (None, None) if there's nothing worth processing."""
+    repo = (payload.get("repository") or {}).get("full_name")
+    if not repo:
+        return None, None
+
+    if event == "push":
+        commits = payload.get("commits") or []
+        ref = payload.get("ref", "")
+        default_branch = (payload.get("repository") or {}).get("default_branch", "main")
+        if not commits or not ref.endswith(f"/{default_branch}"):
+            return None, None
+        pusher = (payload.get("pusher") or {}).get("name", "someone")
+        msgs = "\n".join(f"- {c.get('message', '').splitlines()[0]}" for c in commits[:10])
+        return repo, f"Repository: {repo}\nEvent: {len(commits)} commit(s) pushed to {default_branch} by {pusher}:\n{msgs}"
+
+    if event == "pull_request":
+        action = payload.get("action")
+        pr = payload.get("pull_request") or {}
+        if action == "opened":
+            return repo, f"Repository: {repo}\nEvent: pull request opened — '{pr.get('title','')}'\n{(pr.get('body') or '')[:600]}"
+        if action == "closed" and pr.get("merged"):
+            return repo, f"Repository: {repo}\nEvent: pull request MERGED — '{pr.get('title','')}'\n{(pr.get('body') or '')[:600]}"
+        return None, None
+
+    if event == "issues":
+        action = payload.get("action")
+        issue = payload.get("issue") or {}
+        if action == "opened":
+            return repo, f"Repository: {repo}\nEvent: issue opened — '{issue.get('title','')}'\n{(issue.get('body') or '')[:600]}"
+        if action == "closed":
+            return repo, f"Repository: {repo}\nEvent: issue CLOSED — '{issue.get('title','')}'"
+        return None, None
+
+    if event == "release":
+        if payload.get("action") != "published":
+            return None, None
+        rel = payload.get("release") or {}
+        return repo, f"Repository: {repo}\nEvent: release published — {rel.get('tag_name','')} '{rel.get('name','')}'\n{(rel.get('body') or '')[:600]}"
+
+    return None, None
+
+
+def handle_github_event(event, payload):
+    repo, text = _gh_summarize_event(event, payload)
+    if not text:
+        return
+    log(f"github event [{event}] for {repo}")
+    messages = [{"role": "user", "content": text}]
+    changed_any = False
+    final_text = ""
+    for _ in range(CLAUDE_MAX_ITERS):
+        try:
+            resp = _claude_request(GITHUB_SYSTEM_PROMPT, messages, tools=CLAUDE_TOOLS)
+        except Exception as e:
+            log(f"github->claude call failed: {e}")
+            return
+        if "error" in resp:
+            log(f"github->claude error: {resp['error']}")
+            return
+        content = resp.get("content", [])
+        messages.append({"role": "assistant", "content": content})
+        tool_uses = [b for b in content if b.get("type") == "tool_use"]
+        if not tool_uses:
+            final_text = " ".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
+            break
+        tool_results = []
+        for tu in tool_uses:
+            log(f"github tool call: {tu['name']}({tu.get('input', {})})")
+            result_text, changed = claude_run_tool(tu["name"], tu.get("input", {}))
+            log(f"  -> {result_text}")
+            changed_any = changed_any or changed
+            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
+        messages.append({"role": "user", "content": tool_results})
+    if changed_any:
+        push_state(origin="github")
+        tg_reply(f"🐙 GitHub [{repo}]: {final_text or 'tracker updated.'}")
+    else:
+        log(f"github event [{event}] for {repo}: no tracker change ({final_text or 'no reason given'})")
 
 
 def _get_history(chat_id):
@@ -970,6 +1137,12 @@ def main():
     db.init()
     start_telegram()
     start_reminders()
+    if GITHUB_WEBHOOK_SECRET and ANTHROPIC_API_KEY:
+        log("github webhook: ENABLED at /api/github-webhook")
+    elif GITHUB_WEBHOOK_SECRET:
+        log("github webhook: configured but ANTHROPIC_API_KEY is not set — deliveries will be accepted and ignored")
+    else:
+        log("github webhook: disabled (GITHUB_WEBHOOK_SECRET not set)")
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     httpd.daemon_threads = True
     log(f"serving {WEBROOT} on {BIND}:{PORT} | db {db.DB_PATH}")
