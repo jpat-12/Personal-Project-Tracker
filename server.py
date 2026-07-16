@@ -21,6 +21,8 @@ Config via env (see config.example.env):
                                            #Category !Priority parser; set the key
                                            to let Claude parse free-form messages,
                                            call tools, and ask clarifying questions)
+  DAILY_DIGEST_HOUR (8), REMINDER_DAYS_BEFORE (4)   (optional — needs Telegram;
+                                           digest additionally needs ANTHROPIC_API_KEY)
   TRACKER_PASSWORD                       (optional — omit to leave the board open)
 DB path: $TRACKER_DB or $STATE_DIRECTORY/tracker.db
 
@@ -30,6 +32,7 @@ cookie (30 days); POST /api/logout clears it. index.html itself is always
 served (it holds no data) so the SPA can show its own login screen.
 """
 
+import datetime as _dt
 import hmac
 import json
 import mimetypes
@@ -56,6 +59,8 @@ TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-8").strip()
+DAILY_DIGEST_HOUR = int(os.environ.get("DAILY_DIGEST_HOUR", "8") or "8")  # local hour, 0-23; needs Telegram + Claude
+REMINDER_DAYS_BEFORE = int(os.environ.get("REMINDER_DAYS_BEFORE", "4") or "4")
 
 TRACKER_PASSWORD = os.environ.get("TRACKER_PASSWORD", "").strip()
 COOKIE_NAME = "tracker_session"
@@ -618,14 +623,10 @@ def claude_system_prompt():
     )
 
 
-def claude_call(messages):
-    body = {
-        "model": CLAUDE_MODEL,
-        "max_tokens": 1024,
-        "system": claude_system_prompt(),
-        "tools": CLAUDE_TOOLS,
-        "messages": messages,
-    }
+def _claude_request(system, messages, tools=None, max_tokens=1024):
+    body = {"model": CLAUDE_MODEL, "max_tokens": max_tokens, "system": system, "messages": messages}
+    if tools:
+        body["tools"] = tools
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         CLAUDE_API_URL,
@@ -639,6 +640,18 @@ def claude_call(messages):
     )
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read().decode("utf-8"))
+
+
+def claude_call(messages):
+    return _claude_request(claude_system_prompt(), messages, tools=CLAUDE_TOOLS)
+
+
+def claude_text(system, user_prompt, max_tokens=800):
+    """One-shot text generation, no tools — used for the daily digest."""
+    resp = _claude_request(system, [{"role": "user", "content": user_prompt}], max_tokens=max_tokens)
+    if "error" in resp:
+        raise RuntimeError(resp["error"].get("message", "unknown Claude error"))
+    return " ".join(b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text").strip()
 
 
 def claude_run_tool(name, inp):
@@ -818,11 +831,145 @@ def start_telegram():
     t.start()
 
 
+# ── Due-date reminders + daily Claude "what to work on" digest ─────────────
+# Runs in its own thread on a coarse interval (30 min). Reminders need only
+# Telegram; the digest additionally needs ANTHROPIC_API_KEY.
+
+REMINDER_CHECK_INTERVAL = 1800  # seconds
+
+
+def _days_left(due_date):
+    try:
+        d = _dt.date.fromisoformat(due_date[:10])
+    except (ValueError, TypeError):
+        return None
+    return (d - _dt.date.today()).days
+
+
+def check_due_reminders():
+    try:
+        reminded = set(json.loads(db.meta_get("reminded_ids", "[]") or "[]"))
+    except (ValueError, TypeError):
+        reminded = set()
+    state = db.get_state()
+    due_lines = []
+    new_keys = []
+
+    for p in state["projects"]:
+        if not p.get("due_date") or p.get("status") == "Complete":
+            continue
+        days = _days_left(p["due_date"])
+        if days is None or days > REMINDER_DAYS_BEFORE:
+            continue
+        key = f"proj:{p['id']}:{p['due_date']}"
+        if key in reminded:
+            continue
+        when = "overdue" if days < 0 else ("due today" if days == 0 else f"due in {days}d")
+        due_lines.append(f"📌 {p['id']} [{p['category'] or 'Uncategorized'}] {p['name']} — {when} ({p['due_date']})")
+        new_keys.append(key)
+
+    for t in state["tasks"]:
+        if not t.get("due_date") or t.get("state") == "done":
+            continue
+        days = _days_left(t["due_date"])
+        if days is None or days > REMINDER_DAYS_BEFORE:
+            continue
+        key = f"task:{t['id']}:{t['due_date']}"
+        if key in reminded:
+            continue
+        owner = ""
+        if t.get("project_id"):
+            p = db.get_project(t["project_id"])
+            owner = f" (task on {p['name']})" if p else ""
+        else:
+            owner = f" (task in {t.get('category') or 'Uncategorized'})"
+        when = "overdue" if days < 0 else ("due today" if days == 0 else f"due in {days}d")
+        due_lines.append(f"☑️ {t['name']}{owner} — {when} ({t['due_date']})")
+        new_keys.append(key)
+
+    if due_lines:
+        tg_reply("⏰ Reminders:\n" + "\n".join(due_lines))
+        reminded.update(new_keys)
+        db.meta_set("reminded_ids", json.dumps(list(reminded)))
+        log(f"sent {len(due_lines)} due-date reminder(s)")
+
+
+DIGEST_SYSTEM_PROMPT = (
+    "You write a short daily focus briefing from a snapshot of a personal project tracker. "
+    "Be decisive and specific — this is a Telegram message, not a report. Lead with anything "
+    "overdue, then due-soon, then high/critical-priority active work with no due date. "
+    "3-6 bullet points max, each one line. No preamble, no sign-off, no markdown headers."
+)
+
+
+def build_digest_snapshot():
+    state = db.get_state()
+    lines = []
+    for p in state["projects"]:
+        if p.get("status") == "Complete":
+            continue
+        days = _days_left(p["due_date"]) if p.get("due_date") else None
+        due_note = ""
+        if days is not None:
+            due_note = f", OVERDUE {-days}d" if days < 0 else (f", due today" if days == 0 else f", due in {days}d")
+        doing = [t["name"] for t in state["tasks"] if t.get("project_id") == p["id"] and t.get("state") == "doing"]
+        doing_note = f"; currently working on: {', '.join(doing)}" if doing else ""
+        lines.append(f"- [{p['category'] or 'Uncategorized'}] {p['name']} — {p['status']}/{p['priority']}{due_note}{doing_note}")
+    for t in state["tasks"]:
+        if t.get("project_id") or t.get("state") == "done" or not t.get("due_date"):
+            continue
+        days = _days_left(t["due_date"])
+        due_note = f", OVERDUE {-days}d" if days is not None and days < 0 else (f", due in {days}d" if days is not None else "")
+        lines.append(f"- (category task, no project) [{t.get('category') or 'Uncategorized'}] {t['name']} — {t['state']}{due_note}")
+    return "\n".join(lines) if lines else "(nothing open on the board)"
+
+
+def maybe_send_daily_digest():
+    if not ANTHROPIC_API_KEY:
+        return
+    today = _dt.date.today().isoformat()
+    if db.meta_get("digest_last_date") == today:
+        return
+    now = _dt.datetime.now()
+    if now.hour < DAILY_DIGEST_HOUR:
+        return
+    try:
+        snapshot = build_digest_snapshot()
+        text = claude_text(DIGEST_SYSTEM_PROMPT, f"Today is {today}. Current board:\n{snapshot}")
+        tg_reply(f"📋 Today's focus — {today}\n\n{text}" if text else "📋 Nothing urgent today — board is clear.")
+        db.meta_set("digest_last_date", today)
+        log("sent daily digest")
+    except Exception as e:
+        log(f"daily digest failed: {e}")
+
+
+def reminders_and_digest_loop():
+    log(f"reminders/digest thread started (check every {REMINDER_CHECK_INTERVAL}s, digest at {DAILY_DIGEST_HOUR}:00 local)")
+    while True:
+        try:
+            check_due_reminders()
+        except Exception as e:
+            log(f"check_due_reminders failed: {e}")
+        try:
+            maybe_send_daily_digest()
+        except Exception as e:
+            log(f"maybe_send_daily_digest failed: {e}")
+        time.sleep(REMINDER_CHECK_INTERVAL)
+
+
+def start_reminders():
+    if not (TG_TOKEN and TG_CHAT):
+        return  # reminders/digest both push via Telegram; nothing to do without it
+    t = threading.Thread(target=reminders_and_digest_loop, name="reminders", daemon=True)
+    t.start()
+
+
 # ── main ──────────────────────────────────────────────────────────────────
 
 def main():
     db.init()
     start_telegram()
+    start_reminders()
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     httpd.daemon_threads = True
     log(f"serving {WEBROOT} on {BIND}:{PORT} | db {db.DB_PATH}")

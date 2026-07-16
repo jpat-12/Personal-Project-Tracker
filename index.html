@@ -176,6 +176,28 @@
   .empty-panel .big{font-family:'Oswald';font-size:26px;letter-spacing:0.05em;color:var(--ink-faint);text-transform:uppercase;}
   .empty-panel p{color:var(--ink-dim);font-size:13px;max-width:400px;margin:10px auto 0;line-height:1.5;}
 
+  .cal-toolbar{display:flex;align-items:center;gap:12px;padding:14px 20px 0;}
+  .cal-month-label{font-family:'Oswald';font-size:16px;letter-spacing:0.02em;min-width:150px;text-align:center;}
+  .cal-today-btn{width:auto;padding:9px 12px;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;padding:12px 20px 6px;}
+  .cal-dow{font-family:'JetBrains Mono';font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);text-align:center;padding-bottom:4px;}
+  .cal-cell{min-height:78px;border:1px solid var(--line);border-radius:5px;background:var(--surface);padding:6px 6px 4px;display:flex;flex-direction:column;gap:3px;}
+  .cal-cell.cal-empty{border-color:transparent;background:transparent;}
+  .cal-cell.cal-today{border-color:var(--accent);}
+  .cal-daynum{font-family:'JetBrains Mono';font-size:11px;color:var(--ink-dim);}
+  .cal-today .cal-daynum{color:var(--accent);font-weight:700;}
+  .cal-pills{display:flex;flex-direction:column;gap:3px;overflow:hidden;}
+  .cal-pill{font-size:10.5px;padding:2px 5px;border-radius:3px;background:var(--surface-2);color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+  .cal-pill:hover{color:var(--ink);}
+  .cal-pill.due-over{background:rgba(255,130,88,0.16);color:var(--ember);}
+  .cal-pill.due-soon{background:rgba(92,200,255,0.14);color:var(--accent);}
+  .cal-more{font-family:'JetBrains Mono';font-size:9.5px;color:var(--ink-faint);}
+  @media (max-width:560px){
+    .cal-cell{min-height:56px;}
+    .cal-dow{font-size:8.5px;}
+    .cal-pill{font-size:9px;}
+  }
+
   .legend{margin:26px 20px 0;padding:12px 14px;border:1px solid var(--line);border-radius:5px;font-size:11.5px;color:var(--ink-faint);line-height:1.6;}
   .legend b{color:var(--ink-dim);}
   footer{text-align:center;padding:24px 20px 0;font-family:'JetBrains Mono';font-size:10px;color:var(--ink-faint);letter-spacing:0.04em;}
@@ -415,18 +437,20 @@ function renderProgress(){
   document.getElementById('progFill').style.width=pct+'%';
 }
 function renderToolbar(){
-  document.getElementById('toolbar').innerHTML = `
+  const groupUI = ui.view==='calendar' ? '' : `
     <div class="tb-left">
       <span class="tb-lbl">Group</span>
       <div class="seg">
         <button class="seg-btn${ui.groupBy!=='tag'?' on':''}" data-group="category">Category</button>
         <button class="seg-btn${ui.groupBy==='tag'?' on':''}" data-group="tag">Tag</button>
       </div>
-    </div>
+    </div>`;
+  document.getElementById('toolbar').innerHTML = groupUI + `
     <div class="tb-right">
       <div class="seg">
         <button class="seg-btn${ui.view==='list'?' on':''}" data-view="list">List</button>
         <button class="seg-btn${ui.view==='gallery'?' on':''}" data-view="gallery">Gallery</button>
+        <button class="seg-btn${ui.view==='calendar'?' on':''}" data-view="calendar">Calendar</button>
       </div>
       <button class="btn-add" id="addProjectBtn">+ Add project</button>
     </div>`;
@@ -569,7 +593,64 @@ function catNodeHTML(cat, depth){
   return html;
 }
 
+// ---------------- calendar view ----------------
+let calViewDate = new Date(); calViewDate.setDate(1); // not persisted — resets to current month on reload
+function ymd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+
+function buildDueMap(){
+  const map = {};
+  const add = (key, item)=>{ (map[key] = map[key]||[]).push(item); };
+  data.projects.forEach(p=>{
+    if(!p.due_date || p.status==='Complete') return;
+    add(p.due_date, {type:'project', id:p.id, label:p.name, priority:p.priority});
+  });
+  data.tasks.forEach(t=>{
+    if(!t.due_date || t.state==='done') return;
+    add(t.due_date, {type:'task', id:t.id, label:t.name, projectId:t.project_id||null, category:t.project_id?null:(t.category||'')});
+  });
+  return map;
+}
+
+function renderCalendarView(){
+  const root=document.getElementById('boardContent');
+  const y=calViewDate.getFullYear(), m=calViewDate.getMonth();
+  const startWeekday=new Date(y,m,1).getDay();
+  const daysInMonth=new Date(y,m+1,0).getDate();
+  const dueMap=buildDueMap();
+  const todayKey=ymd(new Date());
+  const monthLabel=calViewDate.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+
+  let cells='';
+  for(let i=0;i<startWeekday;i++) cells += `<div class="cal-cell cal-empty"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const key = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const items = dueMap[key]||[];
+    const info = items.length ? dueInfo(key,false) : null;
+    const pills = items.slice(0,3).map(it=>
+      `<div class="cal-pill ${info?info.cls:''}" data-act="cal-open" data-type="${it.type}" data-id="${esc(it.id)}"`
+      + (it.projectId?` data-projectid="${esc(it.projectId)}"`:'')
+      + (it.category!=null?` data-catname="${esc(it.category)}"`:'')
+      + ` title="${esc(it.label)}">${esc(it.label)}</div>`
+    ).join('');
+    const more = items.length>3 ? `<div class="cal-more">+${items.length-3} more</div>` : '';
+    cells += `<div class="cal-cell${key===todayKey?' cal-today':''}"><div class="cal-daynum">${d}</div><div class="cal-pills">${pills}${more}</div></div>`;
+  }
+
+  root.innerHTML = `
+    <div class="cal-toolbar">
+      <button class="icon-btn" draggable="false" data-act="cal-prev" title="Previous month">‹</button>
+      <div class="cal-month-label">${esc(monthLabel)}</div>
+      <button class="icon-btn" draggable="false" data-act="cal-next" title="Next month">›</button>
+      <button class="mini-btn cal-today-btn" draggable="false" data-act="cal-today-btn">Today</button>
+    </div>
+    <div class="cal-grid">
+      <div class="cal-dow">Sun</div><div class="cal-dow">Mon</div><div class="cal-dow">Tue</div><div class="cal-dow">Wed</div><div class="cal-dow">Thu</div><div class="cal-dow">Fri</div><div class="cal-dow">Sat</div>
+      ${cells}
+    </div>`;
+}
+
 function renderBoard(){
+  if(ui.view==='calendar'){ renderCalendarView(); return; }
   const root=document.getElementById('boardContent');
   const wrap = ()=> ui.view==='gallery' ? `<div class="cards">` : `<div class="list">`;
   let html='', any=false;
@@ -842,6 +923,19 @@ function onBoardClick(e){
   else if(a==='rename-cat'){ const cat=el.dataset.cat; const n=prompt('Rename category "'+cat+'" to:', cat); if(n&&n.trim()&&n.trim()!==cat) sendOp({op:'renameCategory', old:cat, new:n.trim()}); }
   else if(a==='add-subcat'){ const parent=el.dataset.cat; const n=prompt('New sub-category of "'+parent+'":'); if(n&&n.trim()) sendOp({op:'addCategory', name:n.trim(), parent}); }
   else if(a==='del-cat'){ const cat=el.dataset.cat; if(confirm('Delete category "'+cat+'" and its sub-categories? Their projects move up to the parent (or become uncategorized).')){ if(ui.filterCat===cat||catDescendants(cat).includes(ui.filterCat)) ui.filterCat='all'; sendOp({op:'deleteCategory', name:cat}); } }
+  else if(a==='cal-prev'){ calViewDate.setMonth(calViewDate.getMonth()-1); render(); }
+  else if(a==='cal-next'){ calViewDate.setMonth(calViewDate.getMonth()+1); render(); }
+  else if(a==='cal-today-btn'){ calViewDate=new Date(); calViewDate.setDate(1); render(); }
+  else if(a==='cal-open'){
+    const type=el.dataset.type;
+    if(type==='project'){ ui.open[id]=true; }
+    else{
+      const pid=el.dataset.projectid;
+      if(pid){ ui.open[pid]=true; }
+      else{ ui.filterCat = el.dataset.catname || '__uncat__'; }
+    }
+    ui.view='gallery'; saveUI(); render();
+  }
 }
 
 function startRenameTask(labelEl, id){

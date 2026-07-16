@@ -16,7 +16,8 @@ database and every change streams to open browsers in real time.
   things complete.
 - **Three-state tasks.** Tap a task to advance it **To Do → Working → Completed**.
 - **Responsive.** Phone layout and a desktop layout (sticky category sidebar +
-  masonry cards). List or Gallery view, filter by category.
+  masonry cards). List, Gallery, or **Calendar** view, filter by category.
+- **Due-date reminders + a daily Claude focus digest**, both pushed via Telegram.
 
 ## Layout
 
@@ -140,6 +141,30 @@ API directly over HTTPS (no SDK, no pip install) using `CLAUDE_MODEL`
 `getUpdates` consumer. If you were running the Windows `claude_watcher.py`, stop
 its Telegram polling (or give this service a separate bot token) — otherwise the
 two will steal each other's messages.
+
+## Calendar view
+
+Toggle **Calendar** in the toolbar for a month grid of everything with a due
+date — projects and tasks alike, color-coded (amber = due within a week, red =
+overdue). Click an item to jump to it: a project opens directly; a task opens
+its parent project, or filters to its category if it isn't attached to a
+project. Prev/Next/Today navigate months; the displayed month resets to
+today's on reload (not persisted).
+
+## Reminders & daily digest
+
+Both need Telegram configured; the digest additionally needs `ANTHROPIC_API_KEY`.
+
+- **Due-date reminders** — a background check (every 30 min) sends one
+  Telegram message per project/task the first time it's within
+  `REMINDER_DAYS_BEFORE` days of its due date (default 4), including anything
+  already overdue. Each item is only ever reminded once per due date — if you
+  push the date out, it can remind again.
+- **Daily focus digest** — once a day, at `DAILY_DIGEST_HOUR` (local server
+  time, default 8), Claude reviews everything open on the board — overdue and
+  due-soon items, priorities, what's currently "Working" — and sends a short,
+  decisive Telegram message on what to focus on that day. Fires at most once
+  per calendar day.
 
 ## How sync works
 
